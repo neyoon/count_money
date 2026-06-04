@@ -326,9 +326,9 @@ struct EntryView: View {
             let draft = try await ScreenshotOCRService.makeDraft(from: data)
             store.applyQuickEntryDraft(draft)
             applyAmount(draft.candidateAmount)
-            selectedKind = .expense
+            selectedKind = draft.suggestedKind
 
-            if let first = store.expenseCategories.first {
+            if let first = store.categories(for: draft.suggestedKind).first {
                 selectedCategory = first
             }
         } catch {

@@ -202,6 +202,7 @@ struct QuickEntryDraft: Identifiable, Hashable {
     let id: UUID
     var candidateAmount: Decimal
     var candidateAmounts: [Decimal]
+    var suggestedKind: TransactionKind
     var recognizedTextPreview: String
     var confidence: Double
     var createdAt: Date
