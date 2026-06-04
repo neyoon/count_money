@@ -104,17 +104,16 @@ struct EntryView: View {
                     accountSection
                     installmentSection
                     categorySection
+                    saveButton
                     if selectedKind != .fundProfit {
                         screenshotButton
                     }
-                    saveButton
 
                     Spacer()
                 }
             }
             .padding()
             .background(AppColor.background)
-            .navigationTitle("记账")
             .onAppear {
                 if selectedAccountID == nil {
                     selectedAccountID = store.paymentAccounts.first?.id
@@ -474,7 +473,6 @@ struct TransactionsView: View {
                 }
                 .onDelete(perform: deleteTransactions)
             }
-            .navigationTitle("明细")
             .alert("删除失败", isPresented: Binding(
                 get: { message != nil },
                 set: { if !$0 { message = nil } }
@@ -568,7 +566,6 @@ struct AccountsView: View {
                 .padding()
             }
             .background(AppColor.background)
-            .navigationTitle("资产")
             .toolbar {
                 if store.initializationMode {
                     Button {
@@ -1081,7 +1078,6 @@ struct SettingsView: View {
                         .foregroundStyle(AppColor.muted)
                 }
             }
-            .navigationTitle("设置")
             .fileExporter(
                 isPresented: $isExporting,
                 document: exportDocument,

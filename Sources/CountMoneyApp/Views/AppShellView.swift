@@ -1,45 +1,24 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct AppShellView: View {
     @State private var store = AppStore()
     @State private var selectedTab: AppTab = .home
+    @State private var dragOffset: CGFloat = 0
     @State private var shortcutDraftPollingTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            TransactionsView(store: store)
-                .tabItem {
-                    Label(AppTab.transactions.title, systemImage: AppTab.transactions.symbolName)
+        ZStack(alignment: .bottom) {
+            pageContent
+                .ignoresSafeArea(edges: .bottom)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: 50)
                 }
-                .tag(AppTab.transactions)
 
-            DashboardView(
-                store: store,
-                selectedTab: $selectedTab
-            )
-                .tabItem {
-                    Label(AppTab.home.title, systemImage: AppTab.home.symbolName)
-                }
-                .tag(AppTab.home)
-
-            EntryView(store: store)
-                .tabItem {
-                    Label(AppTab.entry.title, systemImage: AppTab.entry.symbolName)
-                }
-                .tag(AppTab.entry)
-
-            AccountsView(store: store)
-                .tabItem {
-                    Label(AppTab.accounts.title, systemImage: AppTab.accounts.symbolName)
-                }
-                .tag(AppTab.accounts)
-
-            SettingsView(store: store)
-                .tabItem {
-                    Label(AppTab.settings.title, systemImage: AppTab.settings.symbolName)
-                }
-                .tag(AppTab.settings)
+            tabBarOverlay
         }
         .tint(AppColor.primary)
         .preferredColorScheme(store.appearance.colorScheme)
@@ -60,6 +39,104 @@ struct AppShellView: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(store.startupError ?? "")
+        }
+    }
+
+    private var tabBarOverlay: some View {
+        PlatformTabBar(selectedTab: $selectedTab)
+            .frame(height: 50)
+            .ignoresSafeArea(edges: .bottom)
+    }
+
+    private var selectedTabIndex: Int {
+        AppTab.mainTabs.firstIndex(of: selectedTab) ?? 0
+    }
+
+    private var pageContent: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                ForEach(AppTab.mainTabs, id: \.self) { tab in
+                    tabView(for: tab)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                }
+            }
+            .offset(x: -CGFloat(selectedTabIndex) * geometry.size.width + dragOffset)
+            .animation(.snappy, value: selectedTab)
+            .clipped()
+            .simultaneousGesture(pageSwipeGesture)
+        }
+    }
+
+    private var pageSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                let width = value.translation.width
+                let height = value.translation.height
+                guard abs(width) > abs(height) else {
+                    return
+                }
+
+                let isAtFirstPage = selectedTabIndex == AppTab.mainTabs.startIndex && width > 0
+                let isAtLastPage = selectedTabIndex == AppTab.mainTabs.index(before: AppTab.mainTabs.endIndex) && width < 0
+                dragOffset = isAtFirstPage || isAtLastPage ? width * 0.25 : width
+            }
+            .onEnded { value in
+                let width = value.translation.width
+                let height = value.translation.height
+                guard abs(width) > abs(height) * 1.4, abs(width) > 60 else {
+                    resetDragOffset()
+                    return
+                }
+
+                if width < 0 {
+                    moveToAdjacentTab(offset: 1)
+                } else {
+                    moveToAdjacentTab(offset: -1)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func tabView(for tab: AppTab) -> some View {
+        switch tab {
+        case .transactions:
+            TransactionsView(store: store)
+        case .home:
+            DashboardView(
+                store: store,
+                selectedTab: $selectedTab
+            )
+        case .entry:
+            EntryView(store: store)
+        case .accounts:
+            AccountsView(store: store)
+        case .settings:
+            SettingsView(store: store)
+        }
+    }
+
+    private func moveToAdjacentTab(offset: Int) {
+        guard let index = AppTab.mainTabs.firstIndex(of: selectedTab) else {
+            resetDragOffset()
+            return
+        }
+
+        let nextIndex = index + offset
+        guard AppTab.mainTabs.indices.contains(nextIndex) else {
+            resetDragOffset()
+            return
+        }
+
+        withAnimation(.snappy) {
+            selectedTab = AppTab.mainTabs[nextIndex]
+            dragOffset = 0
+        }
+    }
+
+    private func resetDragOffset() {
+        withAnimation(.snappy) {
+            dragOffset = 0
         }
     }
 
@@ -92,12 +169,104 @@ struct AppShellView: View {
     }
 }
 
+#if os(iOS)
+private struct PlatformTabBar: UIViewRepresentable {
+    @Binding var selectedTab: AppTab
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selectedTab: $selectedTab)
+    }
+
+    func makeUIView(context: Context) -> UITabBar {
+        let tabBar = UITabBar()
+        tabBar.delegate = context.coordinator
+        tabBar.items = AppTab.mainTabs.enumerated().map { index, tab in
+            UITabBarItem(
+                title: tab.title,
+                image: UIImage(systemName: tab.symbolName),
+                tag: index
+            )
+        }
+        tabBar.tintColor = UIColor(AppColor.primary)
+        tabBar.isTranslucent = true
+        tabBar.backgroundColor = .clear
+        let appearance = UITabBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.backgroundEffect = UIBlurEffect(style: .systemChromeMaterial)
+        appearance.shadowColor = .separator
+        tabBar.standardAppearance = appearance
+        tabBar.scrollEdgeAppearance = appearance
+        return tabBar
+    }
+
+    func updateUIView(_ tabBar: UITabBar, context: Context) {
+        context.coordinator.selectedTab = $selectedTab
+        tabBar.selectedItem = tabBar.items?[selectedIndex]
+    }
+
+    private var selectedIndex: Int {
+        AppTab.mainTabs.firstIndex(of: selectedTab) ?? 0
+    }
+
+    final class Coordinator: NSObject, UITabBarDelegate {
+        var selectedTab: Binding<AppTab>
+
+        init(selectedTab: Binding<AppTab>) {
+            self.selectedTab = selectedTab
+        }
+
+        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+            guard AppTab.mainTabs.indices.contains(item.tag) else {
+                return
+            }
+            withAnimation(.snappy) {
+                selectedTab.wrappedValue = AppTab.mainTabs[item.tag]
+            }
+        }
+    }
+}
+#else
+private struct PlatformTabBar: View {
+    @Binding var selectedTab: AppTab
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(AppTab.mainTabs, id: \.self) { tab in
+                Button {
+                    withAnimation(.snappy) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    Label(tab.title, systemImage: tab.symbolName)
+                        .labelStyle(.iconOnly)
+                        .frame(maxWidth: .infinity)
+                        .overlay(alignment: .bottom) {
+                            Text(tab.title)
+                                .font(.caption2)
+                                .offset(y: 14)
+                        }
+                        .foregroundStyle(selectedTab == tab ? AppColor.primary : AppColor.muted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+}
+#endif
+
 enum AppTab: Hashable {
     case home
     case entry
     case transactions
     case accounts
     case settings
+
+    static let mainTabs: [AppTab] = [.transactions, .home, .entry, .accounts, .settings]
 
     var title: String {
         switch self {

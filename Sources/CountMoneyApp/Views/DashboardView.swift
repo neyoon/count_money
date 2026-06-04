@@ -87,7 +87,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
                 title: "近 7 天收支",
-                value: MoneyFormat.yuan(overview.dailyCashflows.map { $0.income + $0.expense }.reduce(0, +))
+                value: MoneyFormat.yuan(weeklyNetCashflow, signed: true)
             )
 
             Chart(weeklyChartItems) { item in
@@ -118,6 +118,12 @@ struct DashboardView: View {
                 WeeklyCashflowBar(day: item.day, kind: "支出", amount: item.expense)
             ]
         }
+    }
+
+    private var weeklyNetCashflow: Decimal {
+        overview.dailyCashflows
+            .map { $0.income - $0.expense }
+            .reduce(0, +)
     }
 
     private var categoryChart: some View {
