@@ -11,10 +11,12 @@ struct EntryView: View {
     @State private var selectedAccountID: UUID?
     @State private var selectedImageItem: PhotosPickerItem?
     @State private var ocrError: String?
+    @State private var saveError: String?
     @State private var isRecognizing = false
     @State private var isApplyingDraft = false
     @State private var useInstallment = false
     @State private var installmentMonths = 3
+    @State private var appliedDraftID: UUID?
 
     private var visibleCategories: [MoneyCategory] {
         store.categories(for: selectedKind)
@@ -84,6 +86,18 @@ struct EntryView: View {
                 if selectedAccountID == nil {
                     selectedAccountID = store.paymentAccounts.first?.id
                 }
+                applyQuickEntryDraftIfNeeded(store.quickEntryDraft)
+            }
+            .onChange(of: store.quickEntryDraft) { _, draft in
+                applyQuickEntryDraftIfNeeded(draft)
+            }
+            .alert("保存失败", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(saveError ?? "")
             }
         }
     }
@@ -166,11 +180,11 @@ struct EntryView: View {
                     .pickerStyle(.menu)
 
                     if let parsedAmount, parsedAmount > 0 {
-                        Text("保存后会从下月开始，连续 \(installmentMonths) 个月各增加 \(MoneyFormat.yuan(parsedAmount)) 待还。")
+                        Text("这里的金额按每月待还金额记录，不是分期总额。保存后会从下月开始，连续 \(installmentMonths) 个月各增加 \(MoneyFormat.yuan(parsedAmount)) 待还。")
                             .font(.caption)
                             .foregroundStyle(AppColor.muted)
                     } else {
-                        Text("金额按每月待还记录，不自动平均分摊。")
+                        Text("开启分期后，金额填每月待还金额，不填分期总额，系统不会自动平均分摊。")
                             .font(.caption)
                             .foregroundStyle(AppColor.muted)
                     }
@@ -290,16 +304,20 @@ struct EntryView: View {
                 return
             }
 
-            store.addTransaction(
-                kind: selectedKind,
-                amount: parsedAmount,
-                category: selectedCategory,
-                account: selectedAccount,
-                title: selectedCategory.name,
-                installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil
-            )
-            amountText = ""
-            useInstallment = false
+            do {
+                try store.addTransaction(
+                    kind: selectedKind,
+                    amount: parsedAmount,
+                    category: selectedCategory,
+                    account: selectedAccount,
+                    title: selectedCategory.name,
+                    installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil
+                )
+                amountText = ""
+                useInstallment = false
+            } catch {
+                saveError = error.localizedDescription
+            }
         } label: {
             Label("保存", systemImage: "checkmark")
                 .font(.headline)
@@ -308,7 +326,7 @@ struct EntryView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(AppColor.success)
-        .disabled(selectedKind == .transfer || parsedAmount == nil || parsedAmount == 0 || selectedAccount == nil)
+        .disabled(selectedKind == .transfer || parsedAmount == nil || (parsedAmount ?? 0) <= 0 || selectedAccount == nil)
     }
 
     private func recognizeAmount(from item: PhotosPickerItem) async {
@@ -340,6 +358,17 @@ struct EntryView: View {
         isApplyingDraft = true
         amountText = NSDecimalNumber(decimal: amount).stringValue
         isApplyingDraft = false
+    }
+
+    private func applyQuickEntryDraftIfNeeded(_ draft: QuickEntryDraft?) {
+        guard let draft, appliedDraftID != draft.id else { return }
+        appliedDraftID = draft.id
+        applyAmount(draft.candidateAmount)
+        selectedKind = draft.suggestedKind
+
+        if let first = store.categories(for: draft.suggestedKind).first {
+            selectedCategory = first
+        }
     }
 }
 
@@ -394,6 +423,7 @@ struct AccountsView: View {
     @State private var isAddingAsset = false
     @State private var editingAsset: AssetItem?
     @State private var recordingFundAsset: AssetItem?
+    @State private var message: String?
 
     private var orderedAssets: [AssetItem] {
         store.assets.sorted {
@@ -416,7 +446,13 @@ struct AccountsView: View {
                             asset: asset,
                             onEdit: { editingAsset = asset },
                             onFundRecord: { recordingFundAsset = asset },
-                            onDelete: { store.deleteAsset(asset) }
+                            onDelete: {
+                                do {
+                                    try store.deleteAsset(asset)
+                                } catch {
+                                    message = error.localizedDescription
+                                }
+                            }
                         )
                     }
                 }
@@ -439,6 +475,14 @@ struct AccountsView: View {
             }
             .sheet(item: $recordingFundAsset) { asset in
                 FundActivityView(store: store, asset: asset)
+            }
+            .alert("提示", isPresented: Binding(
+                get: { message != nil },
+                set: { if !$0 { message = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(message ?? "")
             }
         }
     }
@@ -483,6 +527,7 @@ struct AssetCard: View {
             }
 
             if asset.kind == .fund {
+                AssetValueRow(title: "基金资产", value: MoneyFormat.yuan(asset.fundCurrentValue))
                 AssetValueRow(title: "累计盈亏", value: MoneyFormat.yuan(asset.fundMarketValue ?? 0, signed: true))
                 AssetValueRow(title: "持有成本", value: MoneyFormat.yuan(asset.fundCost ?? 0))
 
@@ -502,7 +547,7 @@ struct AssetCard: View {
                     .padding(.top, 4)
                 }
             } else {
-                AssetValueRow(title: asset.isDebtLike ? "账户余额" : "余额", value: MoneyFormat.yuan(asset.balance))
+                AssetValueRow(title: asset.isDebtLike ? "当前欠款" : "余额", value: MoneyFormat.yuan(asset.balance))
             }
 
             if asset.isDebtLike {
@@ -569,6 +614,7 @@ struct FundActivityView: View {
     @State private var kind: FundActivityKind = .valuation
     @State private var amountText = ""
     @State private var note = ""
+    @State private var saveError: String?
 
     private var amount: Decimal? {
         Decimal.moneyString(amountText)
@@ -607,11 +653,23 @@ struct FundActivityView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         guard let amount, canSave else { return }
-                        store.addFundActivity(assetID: asset.id, kind: kind, amount: amount, note: note)
-                        dismiss()
+                        do {
+                            try store.addFundActivity(assetID: asset.id, kind: kind, amount: amount, note: note)
+                            dismiss()
+                        } catch {
+                            saveError = error.localizedDescription
+                        }
                     }
                     .disabled(!canSave)
                 }
+            }
+            .alert("保存失败", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(saveError ?? "")
             }
         }
     }
@@ -636,6 +694,7 @@ struct AssetEditorView: View {
     @State private var fundCostText: String
     @State private var fundMarketValueText: String
     @State private var repaymentTexts: [String]
+    @State private var saveError: String?
 
     init(store: AppStore, asset: AssetItem) {
         self.store = store
@@ -652,7 +711,7 @@ struct AssetEditorView: View {
                 Section("基本信息") {
                     TextField("名称", text: $asset.name)
                     LabeledContent("类型", value: asset.kind.title)
-                    moneyField("余额", text: $balanceText)
+                    moneyField(asset.kind.supportsRepayment ? "当前欠款" : "余额", text: $balanceText)
                 }
 
                 if asset.kind == .fund {
@@ -680,10 +739,22 @@ struct AssetEditorView: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        save()
-                        dismiss()
+                        do {
+                            try save()
+                            dismiss()
+                        } catch {
+                            saveError = error.localizedDescription
+                        }
                     }
                 }
+            }
+            .alert("保存失败", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(saveError ?? "")
             }
         }
     }
@@ -695,26 +766,35 @@ struct AssetEditorView: View {
             #endif
     }
 
-    private func save() {
-        asset.balance = Decimal.moneyString(balanceText) ?? 0
+    private func save() throws {
+        asset.balance = try moneyValue(balanceText, field: asset.kind.supportsRepayment ? "当前欠款" : "余额")
 
         if asset.kind == .fund {
-            asset.fundCost = Decimal.moneyString(fundCostText) ?? 0
-            asset.fundMarketValue = Decimal.moneyString(fundMarketValueText) ?? 0
-            asset.balance = asset.fundMarketValue ?? 0
+            asset.fundCost = try moneyValue(fundCostText, field: "持有成本")
+            asset.fundMarketValue = try moneyValue(fundMarketValueText, field: "累计盈亏")
+            asset.balance = asset.fundCurrentValue
         }
 
         if asset.kind.supportsRepayment {
-            asset.repayments = asset.repayments.indices.map { index in
+            asset.repayments = try asset.repayments.indices.map { index in
                 RepaymentMonth(
                     id: asset.repayments[index].id,
                     monthOffset: asset.repayments[index].monthOffset,
-                    amount: Decimal.moneyString(repaymentTexts[index]) ?? 0
+                    amount: try moneyValue(repaymentTexts[index], field: asset.repayments[index].title)
                 )
             }
         }
 
-        store.updateAsset(asset)
+        try store.updateAsset(asset)
+    }
+
+    private func moneyValue(_ text: String, field: String) throws -> Decimal {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        guard let value = Decimal.moneyString(trimmed) else {
+            throw AppStoreFailure.invalidMoneyInput(field)
+        }
+        return value
     }
 
     private static func text(from value: Decimal) -> String {
@@ -744,6 +824,7 @@ struct AddAssetView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var kind: AssetKind = .debitCard
+    @State private var saveError: String?
 
     var body: some View {
         NavigationStack {
@@ -766,11 +847,23 @@ struct AddAssetView: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        store.addAsset(name: name, kind: kind)
-                        dismiss()
+                        do {
+                            try store.addAsset(name: name, kind: kind)
+                            dismiss()
+                        } catch {
+                            saveError = error.localizedDescription
+                        }
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+            .alert("保存失败", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(saveError ?? "")
             }
         }
     }
@@ -876,13 +969,14 @@ struct SettingsView: View {
 struct CategoryManagerView: View {
     var store: AppStore
     @State private var isAdding = false
+    @State private var message: String?
 
     var body: some View {
         List {
             Section("支出") {
                 ForEach(store.expenseCategories) { category in
                     CategoryManagerRow(category: category) {
-                        store.deleteCategory(category)
+                        deleteCategory(category)
                     }
                 }
             }
@@ -890,7 +984,7 @@ struct CategoryManagerView: View {
             Section("收入") {
                 ForEach(store.incomeCategories) { category in
                     CategoryManagerRow(category: category) {
-                        store.deleteCategory(category)
+                        deleteCategory(category)
                     }
                 }
             }
@@ -905,6 +999,22 @@ struct CategoryManagerView: View {
         }
         .sheet(isPresented: $isAdding) {
             AddCategoryView(store: store)
+        }
+        .alert("提示", isPresented: Binding(
+            get: { message != nil },
+            set: { if !$0 { message = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(message ?? "")
+        }
+    }
+
+    private func deleteCategory(_ category: MoneyCategory) {
+        do {
+            try store.deleteCategory(category)
+        } catch {
+            message = error.localizedDescription
         }
     }
 }
@@ -944,6 +1054,7 @@ struct AddCategoryView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var kind: CategoryKind = .expense
+    @State private var saveError: String?
 
     var body: some View {
         NavigationStack {
@@ -966,11 +1077,23 @@ struct AddCategoryView: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        store.addCategory(name: name, kind: kind)
-                        dismiss()
+                        do {
+                            try store.addCategory(name: name, kind: kind)
+                            dismiss()
+                        } catch {
+                            saveError = error.localizedDescription
+                        }
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+            .alert("保存失败", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(saveError ?? "")
             }
         }
     }

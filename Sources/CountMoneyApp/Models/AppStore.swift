@@ -3,7 +3,7 @@ import SwiftUI
 
 @Observable
 final class AppStore {
-    private let database: SQLiteDatabase?
+    private var database: SQLiteDatabase?
 
     var appearance: AppAppearance {
         didSet {
@@ -16,6 +16,7 @@ final class AppStore {
     var incomeCategories: [MoneyCategory]
     var assets: [AssetItem]
     var quickEntryDraft: QuickEntryDraft?
+    var startupError: String?
 
     var overview: MonthlyOverview {
         MonthlyOverview(transactions: transactions)
@@ -27,12 +28,16 @@ final class AppStore {
             .filter { !$0.isDebtLike }
             .map(\.balance)
             .reduce(0, +)
+        let fundHoldings = assets
+            .filter { $0.kind == .fund }
+            .map(\.fundCurrentValue)
+            .reduce(0, +)
         let debt = usableAssets
             .filter(\.isDebtLike)
-            .map(\.totalRepayment)
+            .map { max($0.balance, 0) + $0.totalRepayment }
             .reduce(0, +)
 
-        return AssetOverview(holdings: holdings, debt: debt)
+        return AssetOverview(holdings: holdings, fundHoldings: fundHoldings, debt: debt)
     }
 
     var paymentAccounts: [MoneyAccount] {
@@ -49,32 +54,42 @@ final class AppStore {
     }
 
     init() {
-        database = try? SQLiteDatabase()
-
         let savedAppearance = UserDefaults.standard.string(forKey: "appearance")
             .flatMap(AppAppearance.init(rawValue:))
         appearance = savedAppearance ?? .system
 
-        let snapshot = try? database?.loadSnapshot()
-        let loadedCategories = snapshot?.categories ?? []
+        do {
+            let database = try SQLiteDatabase()
+            self.database = database
+            let snapshot = try database.loadSnapshot()
+            let loadedCategories = snapshot.categories
 
-        if loadedCategories.isEmpty {
+            if loadedCategories.isEmpty {
+                expenseCategories = PreviewData.expenseCategories
+                incomeCategories = PreviewData.incomeCategories
+                assets = PreviewData.assets
+                transactions = []
+                try persistCategories(expenseCategories + incomeCategories)
+                try persistAssets(assets)
+            } else {
+                expenseCategories = loadedCategories
+                    .filter { $0.kind == .expense }
+                    .sorted { $0.sortOrder < $1.sortOrder }
+                incomeCategories = loadedCategories
+                    .filter { $0.kind == .income }
+                    .sorted { $0.sortOrder < $1.sortOrder }
+                assets = snapshot.assets
+                transactions = snapshot.transactions
+                try ensureRecommendedAssets()
+            }
+            startupError = nil
+        } catch {
+            self.database = nil
             expenseCategories = PreviewData.expenseCategories
             incomeCategories = PreviewData.incomeCategories
             assets = PreviewData.assets
             transactions = []
-            persistCategories()
-            persistAssets()
-        } else {
-            expenseCategories = loadedCategories
-                .filter { $0.kind == .expense }
-                .sorted { $0.sortOrder < $1.sortOrder }
-            incomeCategories = loadedCategories
-                .filter { $0.kind == .income }
-                .sorted { $0.sortOrder < $1.sortOrder }
-            assets = snapshot?.assets ?? PreviewData.assets
-            transactions = snapshot?.transactions ?? []
-            ensureRecommendedAssets()
+            startupError = error.localizedDescription
         }
     }
 
@@ -89,7 +104,7 @@ final class AppStore {
         }
     }
 
-    func addCategory(name: String, kind: CategoryKind) {
+    func addCategory(name: String, kind: CategoryKind) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -104,26 +119,34 @@ final class AppStore {
             isSystemPreset: false
         )
 
+        var nextExpenseCategories = expenseCategories
+        var nextIncomeCategories = incomeCategories
         switch kind {
         case .expense:
-            expenseCategories.append(category)
+            nextExpenseCategories.append(category)
         case .income:
-            incomeCategories.append(category)
+            nextIncomeCategories.append(category)
         }
-        persistCategories()
+        try persistCategories(nextExpenseCategories + nextIncomeCategories)
+        expenseCategories = nextExpenseCategories
+        incomeCategories = nextIncomeCategories
     }
 
-    func deleteCategory(_ category: MoneyCategory) {
+    func deleteCategory(_ category: MoneyCategory) throws {
         guard !category.isSystemPreset else { return }
         guard !transactions.contains(where: { $0.category.id == category.id }) else { return }
 
+        var nextExpenseCategories = expenseCategories
+        var nextIncomeCategories = incomeCategories
         switch category.kind {
         case .expense:
-            expenseCategories.removeAll { $0.id == category.id }
+            nextExpenseCategories.removeAll { $0.id == category.id }
         case .income:
-            incomeCategories.removeAll { $0.id == category.id }
+            nextIncomeCategories.removeAll { $0.id == category.id }
         }
-        persistCategories()
+        try persistCategories(nextExpenseCategories + nextIncomeCategories)
+        expenseCategories = nextExpenseCategories
+        incomeCategories = nextIncomeCategories
     }
 
     func startManualEntry() {
@@ -141,8 +164,15 @@ final class AppStore {
         account: MoneyAccount,
         title: String,
         installmentMonths: Int? = nil
-    ) {
-        transactions.insert(
+    ) throws {
+        let usesInstallmentPlan = kind == .expense
+            && (installmentMonths ?? 0) > 0
+            && (asset(for: account)?.kind.supportsInstallment ?? false)
+
+        var nextTransactions = transactions
+        var nextAssets = assets
+
+        nextTransactions.insert(
             MoneyTransaction(
                 id: UUID(),
                 kind: kind,
@@ -154,21 +184,35 @@ final class AppStore {
             ),
             at: 0
         )
-        quickEntryDraft = nil
-        persistTransactions()
 
-        if kind == .expense,
-           let installmentMonths,
-           installmentMonths > 0 {
-            addRepaymentPlan(accountID: account.id, amount: amount, months: installmentMonths)
+        let changedAssetBalance = applyTransactionBalanceChange(
+            to: &nextAssets,
+            kind: kind,
+            amount: amount,
+            accountID: account.id,
+            usesInstallmentPlan: usesInstallmentPlan
+        )
+
+        if usesInstallmentPlan, let installmentMonths {
+            addRepaymentPlan(to: &nextAssets, accountID: account.id, amount: amount, months: installmentMonths)
         }
+
+        if changedAssetBalance || usesInstallmentPlan {
+            try persistLedger(transactions: nextTransactions, assets: nextAssets)
+            assets = nextAssets
+        } else {
+            try persistTransactions(nextTransactions)
+        }
+        transactions = nextTransactions
+        quickEntryDraft = nil
     }
 
-    func addAsset(name: String, kind: AssetKind) {
+    func addAsset(name: String, kind: AssetKind) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        assets.append(
+        var nextAssets = assets
+        nextAssets.append(
             AssetItem(
                 id: UUID(),
                 name: trimmed,
@@ -179,23 +223,29 @@ final class AppStore {
                 fundMarketValue: kind == .fund ? 0 : nil
             )
         )
-        persistAssets()
+        try persistAssets(nextAssets)
+        assets = nextAssets
     }
 
-    func deleteAsset(_ asset: AssetItem) {
-        assets.removeAll { $0.id == asset.id }
-        persistAssets()
+    func deleteAsset(_ asset: AssetItem) throws {
+        var nextAssets = assets
+        nextAssets.removeAll { $0.id == asset.id }
+        try persistAssets(nextAssets)
+        assets = nextAssets
     }
 
-    func updateAsset(_ asset: AssetItem) {
-        guard let index = assets.firstIndex(where: { $0.id == asset.id }) else { return }
-        assets[index] = asset
-        persistAssets()
+    func updateAsset(_ asset: AssetItem) throws {
+        var nextAssets = assets
+        guard let index = nextAssets.firstIndex(where: { $0.id == asset.id }) else { return }
+        nextAssets[index] = asset
+        try persistAssets(nextAssets)
+        assets = nextAssets
     }
 
-    func addFundActivity(assetID: UUID, kind: FundActivityKind, amount: Decimal, note: String) {
-        guard let index = assets.firstIndex(where: { $0.id == assetID }),
-              assets[index].kind == .fund
+    func addFundActivity(assetID: UUID, kind: FundActivityKind, amount: Decimal, note: String) throws {
+        var nextAssets = assets
+        guard let index = nextAssets.firstIndex(where: { $0.id == assetID }),
+              nextAssets[index].kind == .fund
         else {
             return
         }
@@ -209,17 +259,18 @@ final class AppStore {
             note: trimmedNote
         )
 
-        assets[index].fundActivities.insert(record, at: 0)
+        nextAssets[index].fundActivities.insert(record, at: 0)
 
         switch kind {
         case .valuation:
-            assets[index].fundMarketValue = (assets[index].fundMarketValue ?? 0) + amount
-            assets[index].balance = assets[index].fundMarketValue ?? 0
+            nextAssets[index].fundMarketValue = (nextAssets[index].fundMarketValue ?? 0) + amount
         case .investment:
-            assets[index].fundCost = (assets[index].fundCost ?? 0) + amount
+            nextAssets[index].fundCost = (nextAssets[index].fundCost ?? 0) + amount
         }
+        nextAssets[index].balance = nextAssets[index].fundCurrentValue
 
-        persistAssets()
+        try persistAssets(nextAssets)
+        assets = nextAssets
     }
 
     func asset(for account: MoneyAccount) -> AssetItem? {
@@ -227,7 +278,7 @@ final class AppStore {
     }
 
     func exportData() throws -> Data {
-        let records = transactions.map(\.exportRecord)
+        let records = transactions.map(makeExportRecord)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(records)
@@ -235,19 +286,39 @@ final class AppStore {
 
     func importData(_ data: Data) throws {
         let records = try JSONDecoder().decode([TransactionExportRecord].self, from: data)
-        transactions = records.compactMap(makeTransaction)
+        let nextTransactions = try records.map(makeTransaction)
+        try persistTransactions(nextTransactions)
+        transactions = nextTransactions
         quickEntryDraft = nil
-        persistTransactions()
     }
 
-    private func makeTransaction(from record: TransactionExportRecord) -> MoneyTransaction? {
+    private func makeExportRecord(from transaction: MoneyTransaction) -> TransactionExportRecord {
+        let asset = assets.first { $0.id == transaction.account.id }
+        return TransactionExportRecord(
+            id: transaction.id.uuidString,
+            kind: transaction.kind.rawValue,
+            title: transaction.title,
+            categoryPresetKey: transaction.category.presetKey,
+            accountID: transaction.account.id.uuidString,
+            accountName: transaction.account.name,
+            accountKind: asset?.kind.rawValue,
+            accountSymbolName: transaction.account.symbolName,
+            amount: NSDecimalNumber(decimal: transaction.amount).stringValue,
+            occurredAt: ISO8601DateFormatter().string(from: transaction.occurredAt)
+        )
+    }
+
+    private func makeTransaction(from record: TransactionExportRecord) throws -> MoneyTransaction {
         guard
             let id = UUID(uuidString: record.id),
             let kind = TransactionKind(rawValue: record.kind),
-            let amount = Decimal.moneyString(record.amount),
             let occurredAt = ISO8601DateFormatter().date(from: record.occurredAt)
         else {
-            return nil
+            throw AppStoreFailure.invalidImportRecord
+        }
+
+        guard let amount = Decimal.moneyString(record.amount) else {
+            throw AppStoreFailure.invalidImportAmount(record.amount)
         }
 
         return MoneyTransaction(
@@ -255,7 +326,7 @@ final class AppStore {
             kind: kind,
             title: record.title,
             category: category(record.categoryPresetKey, fallbackKind: kind),
-            account: PreviewData.wallet,
+            account: account(for: record),
             amount: amount,
             occurredAt: occurredAt
         )
@@ -269,19 +340,105 @@ final class AppStore {
         return PreviewData.category(presetKey, fallbackKind: fallbackKind)
     }
 
-    private func persistCategories() {
-        try? database?.saveCategories(expenseCategories + incomeCategories)
+    private func account(for record: TransactionExportRecord) -> MoneyAccount {
+        if let accountID = record.accountID.flatMap(UUID.init(uuidString:)),
+           let asset = assets.first(where: { $0.id == accountID }) {
+            return MoneyAccount(
+                id: asset.id,
+                name: asset.name,
+                symbolName: asset.kind.symbolName,
+                balance: asset.balance
+            )
+        }
+
+        if let accountKind = record.accountKind.flatMap(AssetKind.init(rawValue:)),
+           let asset = assets.first(where: { $0.name == record.accountName && $0.kind == accountKind }) {
+            return MoneyAccount(
+                id: asset.id,
+                name: asset.name,
+                symbolName: asset.kind.symbolName,
+                balance: asset.balance
+            )
+        }
+
+        if let asset = assets.first(where: { $0.name == record.accountName }) {
+            return MoneyAccount(
+                id: asset.id,
+                name: asset.name,
+                symbolName: asset.kind.symbolName,
+                balance: asset.balance
+            )
+        }
+
+        return MoneyAccount(
+            id: record.accountID.flatMap(UUID.init(uuidString:)) ?? UUID(),
+            name: record.accountName,
+            symbolName: record.accountSymbolName ?? "creditcard.fill",
+            balance: 0
+        )
     }
 
-    private func persistTransactions() {
-        try? database?.saveTransactions(transactions)
+    private func persistCategories(_ categories: [MoneyCategory]) throws {
+        guard let database else { throw AppStoreFailure.databaseUnavailable }
+        try database.saveCategories(categories)
     }
 
-    private func persistAssets() {
-        try? database?.saveAssets(assets)
+    private func persistTransactions(_ transactions: [MoneyTransaction]) throws {
+        guard let database else { throw AppStoreFailure.databaseUnavailable }
+        try database.saveTransactions(transactions)
     }
 
-    private func addRepaymentPlan(accountID: UUID, amount: Decimal, months: Int) {
+    private func persistAssets(_ assets: [AssetItem]) throws {
+        guard let database else { throw AppStoreFailure.databaseUnavailable }
+        try database.saveAssets(assets)
+    }
+
+    private func persistLedger(transactions: [MoneyTransaction], assets: [AssetItem]) throws {
+        guard let database else { throw AppStoreFailure.databaseUnavailable }
+        try database.saveLedger(transactions: transactions, assets: assets)
+    }
+
+    private func applyTransactionBalanceChange(
+        to assets: inout [AssetItem],
+        kind: TransactionKind,
+        amount: Decimal,
+        accountID: UUID,
+        usesInstallmentPlan: Bool
+    ) -> Bool {
+        guard kind != .transfer,
+              let assetIndex = assets.firstIndex(where: { $0.id == accountID })
+        else {
+            return false
+        }
+
+        if assets[assetIndex].kind.supportsRepayment {
+            if usesInstallmentPlan {
+                return false
+            }
+
+            switch kind {
+            case .expense:
+                assets[assetIndex].balance += amount
+            case .income:
+                assets[assetIndex].balance -= amount
+            case .transfer:
+                return false
+            }
+        } else {
+            switch kind {
+            case .expense:
+                assets[assetIndex].balance -= amount
+            case .income:
+                assets[assetIndex].balance += amount
+            case .transfer:
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private func addRepaymentPlan(to assets: inout [AssetItem], accountID: UUID, amount: Decimal, months: Int) {
         guard let assetIndex = assets.firstIndex(where: { $0.id == accountID }),
               assets[assetIndex].kind.supportsInstallment
         else {
@@ -297,11 +454,9 @@ final class AppStore {
             }
             assets[assetIndex].repayments[repaymentIndex].amount += amount
         }
-
-        persistAssets()
     }
 
-    private func ensureRecommendedAssets() {
+    private func ensureRecommendedAssets() throws {
         var changed = false
         let existingKinds = Set(assets.map(\.kind))
 
@@ -311,13 +466,33 @@ final class AppStore {
         }
 
         if changed {
-            persistAssets()
+            try persistAssets(assets)
         }
     }
 
     private static func makeEmptyRepayments() -> [RepaymentMonth] {
         (0..<24).map {
             RepaymentMonth(id: UUID(), monthOffset: $0, amount: 0)
+        }
+    }
+}
+
+enum AppStoreFailure: LocalizedError {
+    case databaseUnavailable
+    case invalidImportRecord
+    case invalidImportAmount(String)
+    case invalidMoneyInput(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .databaseUnavailable:
+            "本地数据库不可用，数据没有保存成功"
+        case .invalidImportRecord:
+            "导入文件里有无法识别的账目记录"
+        case let .invalidImportAmount(value):
+            "导入文件里有无法识别的金额：\(value)"
+        case let .invalidMoneyInput(field):
+            "\(field) 的金额格式不正确"
         }
     }
 }

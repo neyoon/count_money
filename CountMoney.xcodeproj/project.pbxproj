@@ -19,6 +19,8 @@
 		A1000000000000000000000A /* Services/ScreenshotOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* Services/ScreenshotOCRService.swift */; };
 		A1000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* Assets.xcassets */; };
 		A1000000000000000000000C /* Services/SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* Services/SQLiteDatabase.swift */; };
+		A1000000000000000000000D /* Services/QuickEntryShortcutStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001D /* Services/QuickEntryShortcutStore.swift */; };
+		A1000000000000000000000E /* Services/QuickEntryShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* Services/QuickEntryShortcuts.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +37,8 @@
 		A1000000000000000000001A /* Services/ScreenshotOCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ScreenshotOCRService.swift; sourceTree = "<group>"; };
 		A1000000000000000000001B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
 		A1000000000000000000001C /* Services/SQLiteDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SQLiteDatabase.swift; sourceTree = "<group>"; };
+		A1000000000000000000001D /* Services/QuickEntryShortcutStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickEntryShortcutStore.swift; sourceTree = "<group>"; };
+		A1000000000000000000001E /* Services/QuickEntryShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickEntryShortcuts.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +74,8 @@
 				A10000000000000000000019 /* Models/AppStore.swift */,
 				A1000000000000000000001A /* Services/ScreenshotOCRService.swift */,
 				A1000000000000000000001C /* Services/SQLiteDatabase.swift */,
+				A1000000000000000000001D /* Services/QuickEntryShortcutStore.swift */,
+				A1000000000000000000001E /* Services/QuickEntryShortcuts.swift */,
 				A1000000000000000000001B /* Assets.xcassets */,
 			);
 			path = Sources/CountMoneyApp;
@@ -167,6 +173,8 @@
 				A10000000000000000000009 /* Models/AppStore.swift in Sources */,
 				A1000000000000000000000A /* Services/ScreenshotOCRService.swift in Sources */,
 				A1000000000000000000000C /* Services/SQLiteDatabase.swift in Sources */,
+				A1000000000000000000000D /* Services/QuickEntryShortcutStore.swift in Sources */,
+				A1000000000000000000000E /* Services/QuickEntryShortcuts.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

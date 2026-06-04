@@ -161,6 +161,11 @@ struct AssetItem: Identifiable, Hashable {
         repayments.map(\.amount).reduce(0, +)
     }
 
+    var fundCurrentValue: Decimal {
+        guard kind == .fund else { return balance }
+        return (fundCost ?? 0) + (fundMarketValue ?? 0)
+    }
+
     var nextMonthRepayment: Decimal {
         repayments.first { $0.monthOffset == 1 }?.amount ?? 0
     }
@@ -223,14 +228,15 @@ struct CategorySpending: Identifiable, Hashable {
 
 struct AssetOverview: Hashable {
     var holdings: Decimal
+    var fundHoldings: Decimal
     var debt: Decimal
 
     var net: Decimal {
-        holdings - debt
+        holdings + fundHoldings - debt
     }
 
     var total: Decimal {
-        holdings + debt
+        holdings + fundHoldings + debt
     }
 }
 
@@ -361,7 +367,10 @@ struct TransactionExportRecord: Codable, Identifiable {
     var kind: String
     var title: String
     var categoryPresetKey: String
+    var accountID: String? = nil
     var accountName: String
+    var accountKind: String? = nil
+    var accountSymbolName: String? = nil
     var amount: String
     var occurredAt: String
 }

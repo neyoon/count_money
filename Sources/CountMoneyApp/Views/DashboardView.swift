@@ -32,7 +32,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("资产总额")
+                    Text("净资产")
                         .font(.subheadline)
                         .foregroundStyle(AppColor.muted)
 
@@ -48,8 +48,11 @@ struct DashboardView: View {
 
             AssetBalanceAxis(
                 holdings: assetOverview.holdings,
+                fundHoldings: assetOverview.fundHoldings,
                 debt: assetOverview.debt
             )
+
+            AssetEquationView(assetOverview: assetOverview)
         }
         .surface()
     }
@@ -163,10 +166,11 @@ struct WeeklyCashflowBar: Identifiable {
 
 struct AssetBalanceAxis: View {
     var holdings: Decimal
+    var fundHoldings: Decimal
     var debt: Decimal
 
     private var scaleBase: Double {
-        max(holdings.doubleValue, debt.doubleValue, 1)
+        max((holdings + fundHoldings).doubleValue, debt.doubleValue, 1)
     }
 
     var body: some View {
@@ -187,11 +191,11 @@ struct AssetBalanceAxis: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("持有")
+                    Text("资产")
                         .font(.caption)
                         .foregroundStyle(AppColor.muted)
 
-                    Text(MoneyFormat.yuan(holdings))
+                    Text(MoneyFormat.yuan(holdings + fundHoldings))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AppColor.success)
                         .lineLimit(1)
@@ -203,7 +207,11 @@ struct AssetBalanceAxis: View {
                 let centerWidth: CGFloat = 2
                 let halfWidth = max((proxy.size.width - centerWidth) / 2, 0)
                 let leftWidth = halfWidth * min(max(debt.doubleValue / scaleBase, 0), 1)
-                let rightWidth = halfWidth * min(max(holdings.doubleValue / scaleBase, 0), 1)
+                let positiveAssets = max((holdings + fundHoldings).doubleValue, 0)
+                let rightWidth = halfWidth * min(max(positiveAssets / scaleBase, 0), 1)
+                let fundRatio = positiveAssets == 0 ? 0 : max(fundHoldings.doubleValue, 0) / positiveAssets
+                let fundWidth = rightWidth * min(max(fundRatio, 0), 1)
+                let holdingWidth = max(rightWidth - fundWidth, 0)
 
                 ZStack {
                     Capsule()
@@ -222,9 +230,15 @@ struct AssetBalanceAxis: View {
                             .frame(width: centerWidth, height: 18)
 
                         ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(AppColor.success)
-                                .frame(width: max(rightWidth, holdings > 0 ? 4 : 0))
+                            HStack(spacing: 0) {
+                                Capsule()
+                                    .fill(AppColor.success)
+                                    .frame(width: max(holdingWidth, holdings > 0 ? 4 : 0))
+
+                                Capsule()
+                                    .fill(AppColor.muted.opacity(0.65))
+                                    .frame(width: max(fundWidth, fundHoldings > 0 ? 4 : 0))
+                            }
                         }
                         .frame(width: halfWidth, alignment: .leading)
                     }
@@ -239,6 +253,70 @@ struct AssetBalanceAxis: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(AppColor.line.opacity(0.8), lineWidth: 1)
         )
+    }
+}
+
+struct AssetEquationView: View {
+    var assetOverview: AssetOverview
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            EquationRow(
+                symbol: "+",
+                title: "可用资产",
+                value: assetOverview.holdings,
+                color: AppColor.success
+            )
+            EquationRow(
+                symbol: "+",
+                title: "基金资产",
+                value: assetOverview.fundHoldings,
+                color: AppColor.muted
+            )
+            EquationRow(
+                symbol: "-",
+                title: "待还",
+                value: assetOverview.debt,
+                color: AppColor.danger
+            )
+
+            Divider()
+
+            EquationRow(
+                symbol: "=",
+                title: "净资产",
+                value: assetOverview.net,
+                color: AppColor.ink
+            )
+            .font(.headline)
+        }
+    }
+}
+
+struct EquationRow: View {
+    var symbol: String
+    var title: String
+    var value: Decimal
+    var color: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+                .frame(width: 18, alignment: .trailing)
+
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(AppColor.muted)
+
+            Spacer()
+
+            Text(MoneyFormat.yuan(value, signed: value > 0 && symbol == "="))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+                .monospacedDigit()
+        }
     }
 }
 

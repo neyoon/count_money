@@ -66,86 +66,20 @@ final class SQLiteDatabase {
 
     func saveTransactions(_ transactions: [MoneyTransaction]) throws {
         try transaction {
-            try execute("DELETE FROM transactions")
-
-            let sql = """
-            INSERT INTO transactions (
-                id, kind, title, category_id, account_id, account_name, account_symbol_name, amount, occurred_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """
-
-            for item in transactions {
-                try withStatement(sql) { statement in
-                    bind(statement, 1, item.id.uuidString)
-                    bind(statement, 2, item.kind.rawValue)
-                    bind(statement, 3, item.title)
-                    bind(statement, 4, item.category.id.uuidString)
-                    bind(statement, 5, item.account.id.uuidString)
-                    bind(statement, 6, item.account.name)
-                    bind(statement, 7, item.account.symbolName)
-                    bind(statement, 8, decimalText(item.amount))
-                    bind(statement, 9, ISO8601DateFormatter().string(from: item.occurredAt))
-                    try stepDone(statement)
-                }
-            }
+            try replaceTransactions(transactions)
         }
     }
 
     func saveAssets(_ assets: [AssetItem]) throws {
         try transaction {
-            try execute("DELETE FROM fund_records")
-            try execute("DELETE FROM repayments")
-            try execute("DELETE FROM assets")
+            try replaceAssets(assets)
+        }
+    }
 
-            let assetSQL = """
-            INSERT INTO assets (
-                id, name, kind, balance, fund_cost, fund_market_value
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """
-            let repaymentSQL = """
-            INSERT INTO repayments (
-                id, asset_id, month_offset, amount
-            ) VALUES (?, ?, ?, ?)
-            """
-            let fundRecordSQL = """
-            INSERT INTO fund_records (
-                id, asset_id, kind, amount, occurred_at, note
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """
-
-            for asset in assets {
-                try withStatement(assetSQL) { statement in
-                    bind(statement, 1, asset.id.uuidString)
-                    bind(statement, 2, asset.name)
-                    bind(statement, 3, asset.kind.rawValue)
-                    bind(statement, 4, decimalText(asset.balance))
-                    bind(statement, 5, asset.fundCost.map(decimalText))
-                    bind(statement, 6, asset.fundMarketValue.map(decimalText))
-                    try stepDone(statement)
-                }
-
-                for repayment in asset.repayments {
-                    try withStatement(repaymentSQL) { statement in
-                        bind(statement, 1, repayment.id.uuidString)
-                        bind(statement, 2, asset.id.uuidString)
-                        sqlite3_bind_int(statement, 3, Int32(repayment.monthOffset))
-                        bind(statement, 4, decimalText(repayment.amount))
-                        try stepDone(statement)
-                    }
-                }
-
-                for record in asset.fundActivities {
-                    try withStatement(fundRecordSQL) { statement in
-                        bind(statement, 1, record.id.uuidString)
-                        bind(statement, 2, asset.id.uuidString)
-                        bind(statement, 3, record.kind.rawValue)
-                        bind(statement, 4, decimalText(record.amount))
-                        bind(statement, 5, ISO8601DateFormatter().string(from: record.occurredAt))
-                        bind(statement, 6, record.note)
-                        try stepDone(statement)
-                    }
-                }
-            }
+    func saveLedger(transactions: [MoneyTransaction], assets: [AssetItem]) throws {
+        try transaction {
+            try replaceTransactions(transactions)
+            try replaceAssets(assets)
         }
     }
 
@@ -260,7 +194,7 @@ final class SQLiteDatabase {
                     symbolName: optionalText(statement, 6) ?? "creditcard.fill",
                     balance: 0
                 ),
-                amount: Decimal.moneyString(text(statement, 7)) ?? 0,
+                amount: try decimal(statement, 7, table: "transactions", column: "amount"),
                 occurredAt: ISO8601DateFormatter().date(from: text(statement, 8)) ?? Date()
             )
         }
@@ -284,10 +218,10 @@ final class SQLiteDatabase {
                 id: UUID(uuidString: assetId) ?? UUID(),
                 name: text(statement, 1),
                 kind: kind,
-                balance: Decimal.moneyString(text(statement, 3)) ?? 0,
+                balance: try decimal(statement, 3, table: "assets", column: "balance"),
                 repayments: loadedRepayments,
-                fundCost: optionalText(statement, 4).flatMap(Decimal.moneyString),
-                fundMarketValue: optionalText(statement, 5).flatMap(Decimal.moneyString),
+                fundCost: try optionalDecimal(statement, 4, table: "assets", column: "fund_cost"),
+                fundMarketValue: try optionalDecimal(statement, 5, table: "assets", column: "fund_market_value"),
                 fundActivities: fundActivities[assetId] ?? []
             )
         }
@@ -306,7 +240,7 @@ final class SQLiteDatabase {
                 repayment: RepaymentMonth(
                     id: UUID(uuidString: text(statement, 0)) ?? UUID(),
                     monthOffset: Int(sqlite3_column_int(statement, 2)),
-                    amount: Decimal.moneyString(text(statement, 3)) ?? 0
+                    amount: try decimal(statement, 3, table: "repayments", column: "amount")
                 )
             )
         }
@@ -334,7 +268,7 @@ final class SQLiteDatabase {
                 record: FundActivity(
                     id: UUID(uuidString: text(statement, 0)) ?? UUID(),
                     kind: FundActivityKind(rawValue: text(statement, 2)) ?? .valuation,
-                    amount: Decimal.moneyString(text(statement, 3)) ?? 0,
+                    amount: try decimal(statement, 3, table: "fund_records", column: "amount"),
                     occurredAt: ISO8601DateFormatter().date(from: text(statement, 4)) ?? Date(),
                     note: text(statement, 5)
                 )
@@ -369,12 +303,93 @@ final class SQLiteDatabase {
         }
     }
 
-    private func rows<T>(_ sql: String, map: (OpaquePointer?) -> T) throws -> [T] {
+    private func replaceTransactions(_ transactions: [MoneyTransaction]) throws {
+        try execute("DELETE FROM transactions")
+
+        let sql = """
+        INSERT INTO transactions (
+            id, kind, title, category_id, account_id, account_name, account_symbol_name, amount, occurred_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        for item in transactions {
+            try withStatement(sql) { statement in
+                bind(statement, 1, item.id.uuidString)
+                bind(statement, 2, item.kind.rawValue)
+                bind(statement, 3, item.title)
+                bind(statement, 4, item.category.id.uuidString)
+                bind(statement, 5, item.account.id.uuidString)
+                bind(statement, 6, item.account.name)
+                bind(statement, 7, item.account.symbolName)
+                bind(statement, 8, decimalText(item.amount))
+                bind(statement, 9, ISO8601DateFormatter().string(from: item.occurredAt))
+                try stepDone(statement)
+            }
+        }
+    }
+
+    private func replaceAssets(_ assets: [AssetItem]) throws {
+        try execute("DELETE FROM fund_records")
+        try execute("DELETE FROM repayments")
+        try execute("DELETE FROM assets")
+
+        let assetSQL = """
+        INSERT INTO assets (
+            id, name, kind, balance, fund_cost, fund_market_value
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """
+        let repaymentSQL = """
+        INSERT INTO repayments (
+            id, asset_id, month_offset, amount
+        ) VALUES (?, ?, ?, ?)
+        """
+        let fundRecordSQL = """
+        INSERT INTO fund_records (
+            id, asset_id, kind, amount, occurred_at, note
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """
+
+        for asset in assets {
+            try withStatement(assetSQL) { statement in
+                bind(statement, 1, asset.id.uuidString)
+                bind(statement, 2, asset.name)
+                bind(statement, 3, asset.kind.rawValue)
+                bind(statement, 4, decimalText(asset.balance))
+                bind(statement, 5, asset.fundCost.map(decimalText))
+                bind(statement, 6, asset.fundMarketValue.map(decimalText))
+                try stepDone(statement)
+            }
+
+            for repayment in asset.repayments {
+                try withStatement(repaymentSQL) { statement in
+                    bind(statement, 1, repayment.id.uuidString)
+                    bind(statement, 2, asset.id.uuidString)
+                    sqlite3_bind_int(statement, 3, Int32(repayment.monthOffset))
+                    bind(statement, 4, decimalText(repayment.amount))
+                    try stepDone(statement)
+                }
+            }
+
+            for record in asset.fundActivities {
+                try withStatement(fundRecordSQL) { statement in
+                    bind(statement, 1, record.id.uuidString)
+                    bind(statement, 2, asset.id.uuidString)
+                    bind(statement, 3, record.kind.rawValue)
+                    bind(statement, 4, decimalText(record.amount))
+                    bind(statement, 5, ISO8601DateFormatter().string(from: record.occurredAt))
+                    bind(statement, 6, record.note)
+                    try stepDone(statement)
+                }
+            }
+        }
+    }
+
+    private func rows<T>(_ sql: String, map: (OpaquePointer?) throws -> T) throws -> [T] {
         var result: [T] = []
 
         try withStatement(sql) { statement in
             while sqlite3_step(statement) == SQLITE_ROW {
-                result.append(map(statement))
+                result.append(try map(statement))
             }
         }
 
@@ -424,6 +439,27 @@ final class SQLiteDatabase {
         return text(statement, index)
     }
 
+    private func decimal(_ statement: OpaquePointer?, _ index: Int32, table: String, column: String) throws -> Decimal {
+        let raw = text(statement, index)
+        guard let value = Decimal.moneyString(raw) else {
+            throw SQLiteFailure.invalidStoredAmount(table: table, column: column, value: raw)
+        }
+        return value
+    }
+
+    private func optionalDecimal(
+        _ statement: OpaquePointer?,
+        _ index: Int32,
+        table: String,
+        column: String
+    ) throws -> Decimal? {
+        guard let raw = optionalText(statement, index) else { return nil }
+        guard let value = Decimal.moneyString(raw) else {
+            throw SQLiteFailure.invalidStoredAmount(table: table, column: column, value: raw)
+        }
+        return value
+    }
+
     private func color(for presetKey: String) -> Color {
         PreviewData.allCategories.first { $0.presetKey == presetKey }?.color ?? AppColor.primary
     }
@@ -459,6 +495,7 @@ final class SQLiteDatabase {
 enum SQLiteFailure: LocalizedError {
     case openFailed
     case statementFailed(message: String)
+    case invalidStoredAmount(table: String, column: String, value: String)
 
     var errorDescription: String? {
         switch self {
@@ -466,6 +503,8 @@ enum SQLiteFailure: LocalizedError {
             "无法打开本地 SQLite 数据库"
         case let .statementFailed(message):
             message
+        case let .invalidStoredAmount(table, column, value):
+            "数据库金额格式错误：\(table).\(column) = \(value)"
         }
     }
 }
