@@ -358,8 +358,6 @@ enum PreviewData {
             expenseCategories
         case .income:
             incomeCategories
-        case .transfer:
-            []
         }
     }
 
@@ -419,7 +417,7 @@ enum PreviewData {
         switch fallbackKind {
         case .income:
             return incomeCategories.last!
-        case .expense, .transfer:
+        case .expense:
             return expenseCategories.last!
         }
     }

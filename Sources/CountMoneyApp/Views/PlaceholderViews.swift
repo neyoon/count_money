@@ -235,37 +235,23 @@ struct EntryView: View {
 
     @ViewBuilder
     private var categorySection: some View {
-        if selectedKind == .transfer {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("转账不使用分类")
-                    .font(.headline)
-                    .foregroundStyle(AppColor.ink)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(selectedKind == .expense ? "支出分类" : "收入分类")
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
 
-                Text("转账只记录从哪个账户转到哪个账户，不计入收入或支出统计。")
-                    .font(.subheadline)
-                    .foregroundStyle(AppColor.muted)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface()
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(selectedKind == .expense ? "支出分类" : "收入分类")
-                    .font(.headline)
-                    .foregroundStyle(AppColor.ink)
-
-                LazyVGrid(columns: categoryColumns, spacing: 10) {
-                    ForEach(visibleCategories) { category in
-                        CategoryButton(
-                            category: category,
-                            isSelected: category.id == selectedCategory.id
-                        ) {
-                            selectedCategory = category
-                        }
+            LazyVGrid(columns: categoryColumns, spacing: 10) {
+                ForEach(visibleCategories) { category in
+                    CategoryButton(
+                        category: category,
+                        isSelected: category.id == selectedCategory.id
+                    ) {
+                        selectedCategory = category
                     }
                 }
             }
-            .surface()
         }
+        .surface()
     }
 
     private var screenshotButton: some View {
@@ -296,8 +282,7 @@ struct EntryView: View {
 
     private var saveButton: some View {
         Button {
-            guard selectedKind != .transfer,
-                  let parsedAmount,
+            guard let parsedAmount,
                   parsedAmount > 0,
                   let selectedAccount
             else {
@@ -326,7 +311,7 @@ struct EntryView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(AppColor.success)
-        .disabled(selectedKind == .transfer || parsedAmount == nil || (parsedAmount ?? 0) <= 0 || selectedAccount == nil)
+        .disabled(parsedAmount == nil || (parsedAmount ?? 0) <= 0 || selectedAccount == nil)
     }
 
     private func recognizeAmount(from item: PhotosPickerItem) async {
@@ -423,6 +408,7 @@ struct AccountsView: View {
     @State private var isAddingAsset = false
     @State private var editingAsset: AssetItem?
     @State private var recordingFundAsset: AssetItem?
+    @State private var assetPendingDeletion: AssetItem?
     @State private var message: String?
 
     private var orderedAssets: [AssetItem] {
@@ -446,13 +432,7 @@ struct AccountsView: View {
                             asset: asset,
                             onEdit: { editingAsset = asset },
                             onFundRecord: { recordingFundAsset = asset },
-                            onDelete: {
-                                do {
-                                    try store.deleteAsset(asset)
-                                } catch {
-                                    message = error.localizedDescription
-                                }
-                            }
+                            onDelete: { assetPendingDeletion = asset }
                         )
                     }
                 }
@@ -476,6 +456,21 @@ struct AccountsView: View {
             .sheet(item: $recordingFundAsset) { asset in
                 FundActivityView(store: store, asset: asset)
             }
+            .confirmationDialog(
+                "删除资产",
+                isPresented: Binding(
+                    get: { assetPendingDeletion != nil },
+                    set: { if !$0 { assetPendingDeletion = nil } }
+                ),
+                presenting: assetPendingDeletion
+            ) { asset in
+                Button("删除“\(asset.name)”", role: .destructive) {
+                    deleteAsset(asset)
+                }
+                Button("取消", role: .cancel) {}
+            } message: { asset in
+                Text("删除后这个资产不会再出现在资产列表。已经被账目使用的资产不会被删除。")
+            }
             .alert("提示", isPresented: Binding(
                 get: { message != nil },
                 set: { if !$0 { message = nil } }
@@ -484,6 +479,14 @@ struct AccountsView: View {
             } message: {
                 Text(message ?? "")
             }
+        }
+    }
+
+    private func deleteAsset(_ asset: AssetItem) {
+        do {
+            try store.deleteAsset(asset)
+        } catch {
+            message = error.localizedDescription
         }
     }
 }

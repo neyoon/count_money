@@ -400,8 +400,6 @@ struct TransactionRow: View {
             "-\(MoneyFormat.yuan(transaction.amount))"
         case .income:
             MoneyFormat.yuan(transaction.amount, signed: true)
-        case .transfer:
-            MoneyFormat.yuan(transaction.amount)
         }
     }
 
@@ -411,8 +409,6 @@ struct TransactionRow: View {
             AppColor.danger
         case .income:
             AppColor.success
-        case .transfer:
-            AppColor.muted
         }
     }
 

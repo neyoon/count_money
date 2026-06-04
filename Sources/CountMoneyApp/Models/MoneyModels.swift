@@ -4,7 +4,6 @@ import SwiftUI
 enum TransactionKind: String, CaseIterable, Identifiable {
     case expense
     case income
-    case transfer
 
     var id: String { rawValue }
 
@@ -12,7 +11,6 @@ enum TransactionKind: String, CaseIterable, Identifiable {
         switch self {
         case .expense: "支出"
         case .income: "收入"
-        case .transfer: "转账"
         }
     }
 }
@@ -237,6 +235,54 @@ struct AssetOverview: Hashable {
 
     var total: Decimal {
         holdings + fundHoldings + debt
+    }
+}
+
+enum LedgerCalculator {
+    static func balanceMap(assets: [AssetItem], transactions: [MoneyTransaction]) -> [UUID: Decimal] {
+        var balances = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0.balance) })
+        let assetKinds = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0.kind) })
+
+        for transaction in transactions {
+            guard balances[transaction.account.id] != nil,
+                  let assetKind = assetKinds[transaction.account.id]
+            else {
+                continue
+            }
+
+            if assetKind.supportsRepayment {
+                switch transaction.kind {
+                case .expense:
+                    balances[transaction.account.id, default: 0] += transaction.amount
+                case .income:
+                    balances[transaction.account.id, default: 0] -= transaction.amount
+                }
+            } else {
+                switch transaction.kind {
+                case .expense:
+                    balances[transaction.account.id, default: 0] -= transaction.amount
+                case .income:
+                    balances[transaction.account.id, default: 0] += transaction.amount
+                }
+            }
+        }
+
+        return balances
+    }
+
+    static func assetsWithLedgerBalances(
+        assets: [AssetItem],
+        transactions: [MoneyTransaction]
+    ) -> [AssetItem] {
+        let balances = balanceMap(assets: assets, transactions: transactions)
+
+        return assets.map { asset in
+            var next = asset
+            if let balance = balances[asset.id], asset.kind != .fund {
+                next.balance = balance
+            }
+            return next
+        }
     }
 }
 

@@ -11,8 +11,8 @@ struct SQLiteSnapshot {
 final class SQLiteDatabase {
     private let db: OpaquePointer?
 
-    init() throws {
-        let url = try Self.databaseURL()
+    init(url: URL? = nil) throws {
+        let url = try url ?? Self.databaseURL()
         var handle: OpaquePointer?
 
         guard sqlite3_open(url.path, &handle) == SQLITE_OK else {

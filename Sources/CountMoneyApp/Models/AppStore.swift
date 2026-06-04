@@ -22,13 +22,17 @@ final class AppStore {
         MonthlyOverview(transactions: transactions)
     }
 
+    var ledgerAssets: [AssetItem] {
+        LedgerCalculator.assetsWithLedgerBalances(assets: assets, transactions: transactions)
+    }
+
     var assetOverview: AssetOverview {
-        let usableAssets = assets.filter { $0.kind != .fund }
+        let usableAssets = ledgerAssets.filter { $0.kind != .fund }
         let holdings = usableAssets
             .filter { !$0.isDebtLike }
             .map(\.balance)
             .reduce(0, +)
-        let fundHoldings = assets
+        let fundHoldings = ledgerAssets
             .filter { $0.kind == .fund }
             .map(\.fundCurrentValue)
             .reduce(0, +)
@@ -41,7 +45,7 @@ final class AppStore {
     }
 
     var paymentAccounts: [MoneyAccount] {
-        assets
+        ledgerAssets
             .filter { $0.kind.canPayTransaction }
             .map { asset in
                 MoneyAccount(
@@ -53,13 +57,18 @@ final class AppStore {
             }
     }
 
-    init() {
+    init(database providedDatabase: SQLiteDatabase? = nil) {
         let savedAppearance = UserDefaults.standard.string(forKey: "appearance")
             .flatMap(AppAppearance.init(rawValue:))
         appearance = savedAppearance ?? .system
 
         do {
-            let database = try SQLiteDatabase()
+            let database: SQLiteDatabase
+            if let providedDatabase {
+                database = providedDatabase
+            } else {
+                database = try SQLiteDatabase()
+            }
             self.database = database
             let snapshot = try database.loadSnapshot()
             let loadedCategories = snapshot.categories
@@ -99,8 +108,6 @@ final class AppStore {
             expenseCategories
         case .income:
             incomeCategories
-        case .transfer:
-            []
         }
     }
 
@@ -185,19 +192,11 @@ final class AppStore {
             at: 0
         )
 
-        let changedAssetBalance = applyTransactionBalanceChange(
-            to: &nextAssets,
-            kind: kind,
-            amount: amount,
-            accountID: account.id,
-            usesInstallmentPlan: usesInstallmentPlan
-        )
-
         if usesInstallmentPlan, let installmentMonths {
             addRepaymentPlan(to: &nextAssets, accountID: account.id, amount: amount, months: installmentMonths)
         }
 
-        if changedAssetBalance || usesInstallmentPlan {
+        if usesInstallmentPlan {
             try persistLedger(transactions: nextTransactions, assets: nextAssets)
             assets = nextAssets
         } else {
@@ -228,6 +227,10 @@ final class AppStore {
     }
 
     func deleteAsset(_ asset: AssetItem) throws {
+        guard !transactions.contains(where: { $0.account.id == asset.id }) else {
+            throw AppStoreFailure.assetInUse(asset.name)
+        }
+
         var nextAssets = assets
         nextAssets.removeAll { $0.id == asset.id }
         try persistAssets(nextAssets)
@@ -274,7 +277,7 @@ final class AppStore {
     }
 
     func asset(for account: MoneyAccount) -> AssetItem? {
-        assets.first { $0.id == account.id }
+        ledgerAssets.first { $0.id == account.id }
     }
 
     func exportData() throws -> Data {
@@ -286,8 +289,24 @@ final class AppStore {
 
     func importData(_ data: Data) throws {
         let records = try JSONDecoder().decode([TransactionExportRecord].self, from: data)
-        let nextTransactions = try records.map(makeTransaction)
-        try persistTransactions(nextTransactions)
+        var nextAssets = assets
+        var nextTransactions = transactions
+        var knownTransactionIDs = Set(transactions.map(\.id))
+
+        for record in records {
+            guard let recordID = UUID(uuidString: record.id) else {
+                throw AppStoreFailure.invalidImportRecord
+            }
+            guard !knownTransactionIDs.contains(recordID) else { continue }
+
+            let transaction = try makeTransaction(from: record, assets: &nextAssets)
+            nextTransactions.append(transaction)
+            knownTransactionIDs.insert(transaction.id)
+        }
+
+        nextTransactions.sort { $0.occurredAt > $1.occurredAt }
+        try persistLedger(transactions: nextTransactions, assets: nextAssets)
+        assets = nextAssets
         transactions = nextTransactions
         quickEntryDraft = nil
     }
@@ -308,7 +327,7 @@ final class AppStore {
         )
     }
 
-    private func makeTransaction(from record: TransactionExportRecord) throws -> MoneyTransaction {
+    private func makeTransaction(from record: TransactionExportRecord, assets: inout [AssetItem]) throws -> MoneyTransaction {
         guard
             let id = UUID(uuidString: record.id),
             let kind = TransactionKind(rawValue: record.kind),
@@ -326,7 +345,7 @@ final class AppStore {
             kind: kind,
             title: record.title,
             category: category(record.categoryPresetKey, fallbackKind: kind),
-            account: account(for: record),
+            account: account(for: record, assets: &assets),
             amount: amount,
             occurredAt: occurredAt
         )
@@ -340,7 +359,7 @@ final class AppStore {
         return PreviewData.category(presetKey, fallbackKind: fallbackKind)
     }
 
-    private func account(for record: TransactionExportRecord) -> MoneyAccount {
+    private func account(for record: TransactionExportRecord, assets: inout [AssetItem]) -> MoneyAccount {
         if let accountID = record.accountID.flatMap(UUID.init(uuidString:)),
            let asset = assets.first(where: { $0.id == accountID }) {
             return MoneyAccount(
@@ -370,10 +389,22 @@ final class AppStore {
             )
         }
 
-        return MoneyAccount(
+        let kind = record.accountKind.flatMap(AssetKind.init(rawValue:)) ?? .cash
+        let asset = AssetItem(
             id: record.accountID.flatMap(UUID.init(uuidString:)) ?? UUID(),
             name: record.accountName,
-            symbolName: record.accountSymbolName ?? "creditcard.fill",
+            kind: kind,
+            balance: 0,
+            repayments: Self.makeEmptyRepayments(),
+            fundCost: kind == .fund ? 0 : nil,
+            fundMarketValue: kind == .fund ? 0 : nil
+        )
+        assets.append(asset)
+
+        return MoneyAccount(
+            id: asset.id,
+            name: asset.name,
+            symbolName: asset.kind.symbolName,
             balance: 0
         )
     }
@@ -396,46 +427,6 @@ final class AppStore {
     private func persistLedger(transactions: [MoneyTransaction], assets: [AssetItem]) throws {
         guard let database else { throw AppStoreFailure.databaseUnavailable }
         try database.saveLedger(transactions: transactions, assets: assets)
-    }
-
-    private func applyTransactionBalanceChange(
-        to assets: inout [AssetItem],
-        kind: TransactionKind,
-        amount: Decimal,
-        accountID: UUID,
-        usesInstallmentPlan: Bool
-    ) -> Bool {
-        guard kind != .transfer,
-              let assetIndex = assets.firstIndex(where: { $0.id == accountID })
-        else {
-            return false
-        }
-
-        if assets[assetIndex].kind.supportsRepayment {
-            if usesInstallmentPlan {
-                return false
-            }
-
-            switch kind {
-            case .expense:
-                assets[assetIndex].balance += amount
-            case .income:
-                assets[assetIndex].balance -= amount
-            case .transfer:
-                return false
-            }
-        } else {
-            switch kind {
-            case .expense:
-                assets[assetIndex].balance -= amount
-            case .income:
-                assets[assetIndex].balance += amount
-            case .transfer:
-                return false
-            }
-        }
-
-        return true
     }
 
     private func addRepaymentPlan(to assets: inout [AssetItem], accountID: UUID, amount: Decimal, months: Int) {
@@ -482,6 +473,7 @@ enum AppStoreFailure: LocalizedError {
     case invalidImportRecord
     case invalidImportAmount(String)
     case invalidMoneyInput(String)
+    case assetInUse(String)
 
     var errorDescription: String? {
         switch self {
@@ -493,6 +485,8 @@ enum AppStoreFailure: LocalizedError {
             "导入文件里有无法识别的金额：\(value)"
         case let .invalidMoneyInput(field):
             "\(field) 的金额格式不正确"
+        case let .assetInUse(name):
+            "“\(name)”已经被账目使用，不能直接删除"
         }
     }
 }

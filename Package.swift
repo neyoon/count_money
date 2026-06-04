@@ -21,6 +21,11 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
+        ),
+        .testTarget(
+            name: "CountMoneyAppTests",
+            dependencies: ["CountMoneyApp"],
+            path: "Tests/CountMoneyAppTests"
         )
     ]
 )
