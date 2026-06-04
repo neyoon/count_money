@@ -277,7 +277,7 @@ enum PreviewData {
         ),
         AssetItem(
             id: UUID(),
-            name: "微信零钱",
+            name: "零钱",
             kind: .wechatChange,
             balance: 0,
             repayments: emptyRepayments(),

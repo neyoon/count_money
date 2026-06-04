@@ -45,7 +45,7 @@ enum AssetKind: String, CaseIterable, Identifiable {
         case .alipayBalance: "支付宝余额"
         case .alipayYuEBao: "余额宝"
         case .alipayCredit: "花呗"
-        case .wechatChange: "微信零钱"
+        case .wechatChange: "零钱"
         case .wechatChangePass: "零钱通"
         case .wechatCredit: "微信分付"
         case .meituan: "美团月付"

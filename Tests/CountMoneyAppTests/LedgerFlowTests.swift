@@ -95,6 +95,29 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(store.assets.contains { $0.id == debit.id })
     }
 
+    func testLegacyDefaultAssetNamesAreNormalizedOnStartup() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let database = try SQLiteDatabase(url: url)
+        try database.saveCategories(PreviewData.expenseCategories + PreviewData.incomeCategories)
+        try database.saveAssets([
+            asset(name: "支付宝花呗", kind: .alipayCredit, balance: 0),
+            asset(name: "微信零钱", kind: .wechatChange, balance: 0),
+            asset(name: "微信待还", kind: .wechatCredit, balance: 0)
+        ])
+
+        let store = AppStore(database: database)
+
+        XCTAssertTrue(store.assets.contains { $0.kind == .alipayCredit && $0.name == "花呗" })
+        XCTAssertTrue(store.assets.contains { $0.kind == .wechatChange && $0.name == "零钱" })
+        XCTAssertTrue(store.assets.contains { $0.kind == .wechatCredit && $0.name == "微信分付" })
+        XCTAssertFalse(store.assets.contains { $0.name == "支付宝花呗" || $0.name == "微信零钱" || $0.name == "微信待还" })
+    }
+
     private func transaction(
         kind: TransactionKind,
         title: String,

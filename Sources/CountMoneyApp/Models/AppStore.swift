@@ -89,7 +89,7 @@ final class AppStore {
                     .sorted { $0.sortOrder < $1.sortOrder }
                 assets = snapshot.assets
                 transactions = snapshot.transactions
-                try ensureRecommendedAssets()
+                try ensureRecommendedAssetsAndNames()
             }
             startupError = nil
         } catch {
@@ -447,7 +447,7 @@ final class AppStore {
         }
     }
 
-    private func ensureRecommendedAssets() throws {
+    private func ensureRecommendedAssetsAndNames() throws {
         var changed = false
         let existingKinds = Set(assets.map(\.kind))
 
@@ -456,8 +456,27 @@ final class AppStore {
             changed = true
         }
 
+        for index in assets.indices {
+            guard let normalizedName = normalizedDefaultAssetName(for: assets[index]) else { continue }
+            assets[index].name = normalizedName
+            changed = true
+        }
+
         if changed {
             try persistAssets(assets)
+        }
+    }
+
+    private func normalizedDefaultAssetName(for asset: AssetItem) -> String? {
+        switch asset.kind {
+        case .alipayCredit where asset.name == "支付宝花呗":
+            return "花呗"
+        case .wechatChange where asset.name == "微信零钱":
+            return "零钱"
+        case .wechatCredit where asset.name == "微信待还":
+            return "微信分付"
+        default:
+            return nil
         }
     }
 
