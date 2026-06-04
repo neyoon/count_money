@@ -12,6 +12,9 @@ struct AppShellView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            AppColor.background
+                .ignoresSafeArea()
+
             pageContent
                 .ignoresSafeArea(edges: .bottom)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -64,7 +67,8 @@ struct AppShellView: View {
             .offset(x: -CGFloat(selectedTabIndex) * geometry.size.width + dragOffset)
             .animation(.snappy, value: selectedTab)
             .clipped()
-            .simultaneousGesture(pageSwipeGesture)
+            .contentShape(Rectangle())
+            .simultaneousGesture(pageSwipeGesture, including: .gesture)
         }
     }
 
@@ -76,19 +80,24 @@ struct AppShellView: View {
                 guard abs(width) > abs(height) else {
                     return
                 }
+                guard !isBlockedBoundarySwipe(width: width) else {
+                    dragOffset = 0
+                    return
+                }
 
-                let isAtFirstPage = selectedTabIndex == AppTab.mainTabs.startIndex && width > 0
-                let isAtLastPage = selectedTabIndex == AppTab.mainTabs.index(before: AppTab.mainTabs.endIndex) && width < 0
-                dragOffset = isAtFirstPage || isAtLastPage ? width * 0.25 : width
+                dragOffset = width
             }
             .onEnded { value in
                 let width = value.translation.width
                 let height = value.translation.height
+                guard !isBlockedBoundarySwipe(width: width) else {
+                    resetDragOffset()
+                    return
+                }
                 guard abs(width) > abs(height) * 1.4, abs(width) > 60 else {
                     resetDragOffset()
                     return
                 }
-
                 if width < 0 {
                     moveToAdjacentTab(offset: 1)
                 } else {
@@ -97,11 +106,21 @@ struct AppShellView: View {
             }
     }
 
+    private func isBlockedBoundarySwipe(width: CGFloat) -> Bool {
+        if selectedTabIndex == AppTab.mainTabs.startIndex, width > 0 {
+            return true
+        }
+        if selectedTabIndex == AppTab.mainTabs.index(before: AppTab.mainTabs.endIndex), width < 0 {
+            return true
+        }
+        return false
+    }
+
     @ViewBuilder
     private func tabView(for tab: AppTab) -> some View {
         switch tab {
         case .transactions:
-            TransactionsView(store: store)
+            TransactionsView(store: store, isActive: selectedTab == .transactions)
         case .home:
             DashboardView(
                 store: store,

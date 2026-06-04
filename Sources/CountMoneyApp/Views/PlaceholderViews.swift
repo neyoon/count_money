@@ -459,7 +459,9 @@ struct CategoryButton: View {
 
 struct TransactionsView: View {
     var store: AppStore
+    var isActive = true
     @State private var message: String?
+    @State private var listResetID = UUID()
 
     private var sortedTransactions: [MoneyTransaction] {
         store.transactions.sorted { $0.occurredAt > $1.occurredAt }
@@ -470,9 +472,17 @@ struct TransactionsView: View {
             List {
                 ForEach(sortedTransactions) { transaction in
                     TransactionRow(transaction: transaction)
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                deleteTransaction(transaction)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .tint(.red)
+                        }
                 }
-                .onDelete(perform: deleteTransactions)
             }
+            .id(listResetID)
             .alert("删除失败", isPresented: Binding(
                 get: { message != nil },
                 set: { if !$0 { message = nil } }
@@ -481,16 +491,17 @@ struct TransactionsView: View {
             } message: {
                 Text(message ?? "")
             }
+            .onChange(of: isActive) { _, isActive in
+                if !isActive {
+                    listResetID = UUID()
+                }
+            }
         }
     }
 
-    private func deleteTransactions(at offsets: IndexSet) {
-        let transactionsToDelete = offsets.map { sortedTransactions[$0] }
-
+    private func deleteTransaction(_ transaction: MoneyTransaction) {
         do {
-            for transaction in transactionsToDelete {
-                try store.deleteTransaction(transaction)
-            }
+            try store.deleteTransaction(transaction)
         } catch {
             message = error.localizedDescription
         }
