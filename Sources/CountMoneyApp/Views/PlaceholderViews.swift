@@ -392,13 +392,41 @@ struct CategoryButton: View {
 
 struct TransactionsView: View {
     var store: AppStore
+    @State private var message: String?
+
+    private var sortedTransactions: [MoneyTransaction] {
+        store.transactions.sorted { $0.occurredAt > $1.occurredAt }
+    }
 
     var body: some View {
         NavigationStack {
-            List(store.transactions.sorted { $0.occurredAt > $1.occurredAt }) { transaction in
-                TransactionRow(transaction: transaction)
+            List {
+                ForEach(sortedTransactions) { transaction in
+                    TransactionRow(transaction: transaction)
+                }
+                .onDelete(perform: deleteTransactions)
             }
             .navigationTitle("明细")
+            .alert("删除失败", isPresented: Binding(
+                get: { message != nil },
+                set: { if !$0 { message = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(message ?? "")
+            }
+        }
+    }
+
+    private func deleteTransactions(at offsets: IndexSet) {
+        let transactionsToDelete = offsets.map { sortedTransactions[$0] }
+
+        do {
+            for transaction in transactionsToDelete {
+                try store.deleteTransaction(transaction)
+            }
+        } catch {
+            message = error.localizedDescription
         }
     }
 }
@@ -412,7 +440,7 @@ struct AccountsView: View {
     @State private var message: String?
 
     private var orderedAssets: [AssetItem] {
-        store.assets.sorted {
+        store.ledgerAssets.sorted {
             if $0.kind == .fund && $1.kind != .fund {
                 return true
             }
@@ -430,7 +458,7 @@ struct AccountsView: View {
                     ForEach(orderedAssets) { asset in
                         AssetCard(
                             asset: asset,
-                            onEdit: { editingAsset = asset },
+                            onEdit: { editingAsset = store.assets.first { $0.id == asset.id } ?? asset },
                             onFundRecord: { recordingFundAsset = asset },
                             onDelete: { assetPendingDeletion = asset }
                         )

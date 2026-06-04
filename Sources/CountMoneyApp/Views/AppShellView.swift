@@ -15,8 +15,8 @@ struct AppShellView: View {
                 .tag(AppTab.transactions)
 
             DashboardView(
-                overview: store.overview,
-                assetOverview: store.assetOverview
+                store: store,
+                selectedTab: $selectedTab
             )
                 .tabItem {
                     Label(AppTab.home.title, systemImage: AppTab.home.symbolName)

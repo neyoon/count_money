@@ -206,6 +206,13 @@ final class AppStore {
         quickEntryDraft = nil
     }
 
+    func deleteTransaction(_ transaction: MoneyTransaction) throws {
+        var nextTransactions = transactions
+        nextTransactions.removeAll { $0.id == transaction.id }
+        try persistTransactions(nextTransactions)
+        transactions = nextTransactions
+    }
+
     func addAsset(name: String, kind: AssetKind) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

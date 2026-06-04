@@ -95,6 +95,30 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(store.assets.contains { $0.id == debit.id })
     }
 
+    func testIncomeUpdatesRealtimeAccountAndOverviewBalanceUntilDeleted() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let account = try XCTUnwrap(store.paymentAccounts.first { $0.name == "零钱通" })
+        let salary = try XCTUnwrap(store.incomeCategories.first { $0.presetKey == "income_salary" })
+
+        try store.addTransaction(kind: .income, amount: 1_000, category: salary, account: account, title: "工资")
+
+        XCTAssertEqual(store.paymentAccounts.first { $0.id == account.id }?.balance, 1_000)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == account.id }?.balance, 1_000)
+        XCTAssertEqual(store.assetOverview.net, 1_000)
+
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "工资" })
+        try store.deleteTransaction(transaction)
+
+        XCTAssertEqual(store.paymentAccounts.first { $0.id == account.id }?.balance, 0)
+        XCTAssertEqual(store.assetOverview.net, 0)
+    }
+
     func testLegacyDefaultAssetNamesAreNormalizedOnStartup() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")

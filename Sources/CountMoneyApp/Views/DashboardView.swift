@@ -2,8 +2,16 @@ import Charts
 import SwiftUI
 
 struct DashboardView: View {
-    let overview: MonthlyOverview
-    let assetOverview: AssetOverview
+    var store: AppStore
+    @Binding var selectedTab: AppTab
+
+    private var overview: MonthlyOverview {
+        store.overview
+    }
+
+    private var assetOverview: AssetOverview {
+        store.assetOverview
+    }
 
     private var columns: [GridItem] {
         [
@@ -18,6 +26,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     hero
                     metrics
+                    liveBalances
                     weeklyChart
                     categoryChart
                     recentTransactions
@@ -138,9 +147,58 @@ struct DashboardView: View {
         .surface()
     }
 
+    private var liveBalances: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "实时余额", value: "按资产")
+
+            VStack(spacing: 0) {
+                ForEach(liveBalanceAssets) { asset in
+                    AssetBalanceRow(asset: asset, scaleBase: liveBalanceScaleBase)
+
+                    if asset.id != liveBalanceAssets.last?.id {
+                        Divider()
+                            .padding(.leading, 44)
+                    }
+                }
+            }
+        }
+        .surface()
+    }
+
+    private var liveBalanceAssets: [AssetItem] {
+        store.ledgerAssets.filter { !$0.isDebtLike }
+    }
+
+    private var liveBalanceScaleBase: Double {
+        let maxValue = liveBalanceAssets
+            .map { abs(liveBalanceValue(for: $0).doubleValue) }
+            .max() ?? 0
+        return max(maxValue, 1)
+    }
+
+    private func liveBalanceValue(for asset: AssetItem) -> Decimal {
+        if asset.kind == .fund {
+            return asset.fundCurrentValue
+        }
+        return asset.balance
+    }
+
     private var recentTransactions: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "最近账目", value: "查看全部")
+            HStack {
+                Text("最近账目")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
+
+                Spacer()
+
+                Button("查看全部") {
+                    selectedTab = .transactions
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(AppColor.primary)
+                .buttonStyle(.plain)
+            }
 
             VStack(spacing: 0) {
                 ForEach(overview.recentTransactions) { transaction in
@@ -154,6 +212,87 @@ struct DashboardView: View {
             }
         }
         .surface()
+    }
+}
+
+struct AssetBalanceRow: View {
+    var asset: AssetItem
+    var scaleBase: Double
+
+    private var value: Decimal {
+        if asset.kind == .fund {
+            return asset.fundCurrentValue
+        }
+        return asset.balance
+    }
+
+    private var valueText: String {
+        MoneyFormat.yuan(value)
+    }
+
+    private var valueColor: Color {
+        if value == 0 {
+            return AppColor.muted
+        }
+        return barColor
+    }
+
+    private var barColor: Color {
+        if asset.kind == .fund {
+            return AppColor.muted
+        }
+        if asset.isDebtLike || value < 0 {
+            return AppColor.danger
+        }
+        return AppColor.success
+    }
+
+    private var barRatio: Double {
+        min(abs(value.doubleValue) / scaleBase, 1)
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 10) {
+                Image(systemName: asset.kind.symbolName)
+                    .font(.subheadline)
+                    .foregroundStyle(barColor)
+                    .frame(width: 32, height: 32)
+                    .background(barColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(asset.name)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(AppColor.ink)
+
+                    Text(asset.isDebtLike ? "当前欠款" : asset.kind.title)
+                        .font(.caption)
+                        .foregroundStyle(AppColor.muted)
+                }
+
+                Spacer()
+
+                Text(valueText)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
+                    .monospacedDigit()
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(AppColor.line.opacity(0.24))
+
+                    Capsule()
+                        .fill(barColor)
+                        .frame(width: value == 0 ? 0 : max(proxy.size.width * barRatio, 4))
+                }
+            }
+            .frame(height: 7)
+            .padding(.leading, 42)
+        }
+        .padding(.vertical, 9)
     }
 }
 
