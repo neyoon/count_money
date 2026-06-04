@@ -19,24 +19,6 @@
 - 第一版不依赖第三方后端服务器。
 - 第一版不接入银行卡自动抓取，避免隐私、稳定性和合规问题。
 
-## 2. 推荐技术路线
-
-建议做一个 Apple 生态原生应用：
-
-- UI：SwiftUI
-- 平台：iOS + macOS
-- 本地数据库：SQLite，推荐使用 GRDB
-- 同步：CloudKit 私有数据库
-- 备份：本地导出 + iCloud Drive 自动备份文件
-- 图表：Swift Charts
-- 安全：Face ID / Touch ID 解锁，数据库文件使用系统文件保护；后续可考虑 SQLCipher
-
-为什么不建议第一版直接用 Web / React Native：
-
-- 你的主要设备是 iPhone，原生输入、Face ID、CloudKit、后台任务、文件备份更顺。
-- Mac 也可以用 SwiftUI 共用大量代码。
-- 不需要维护自己的服务器，数据隐私和长期成本更可控。
-
 ## 3. 产品结构
 
 应用分成五个主要区域：
