@@ -344,6 +344,9 @@ struct AssetBalanceAxis: View {
                 let fundRatio = positiveAssets == 0 ? 0 : max(fundHoldings.doubleValue, 0) / positiveAssets
                 let fundWidth = rightWidth * min(max(fundRatio, 0), 1)
                 let holdingWidth = max(rightWidth - fundWidth, 0)
+                let debtBarWidth = max(leftWidth, debt > 0 ? 4 : 0)
+                let holdingBarWidth = max(holdingWidth, holdings > 0 ? 4 : 0)
+                let fundBarWidth = max(fundWidth, fundHoldings > 0 ? 4 : 0)
 
                 ZStack {
                     Capsule()
@@ -351,9 +354,9 @@ struct AssetBalanceAxis: View {
 
                     HStack(spacing: 0) {
                         ZStack(alignment: .trailing) {
-                            Capsule()
-                                .fill(AppColor.danger)
-                                .frame(width: max(leftWidth, debt > 0 ? 4 : 0))
+                            if debtBarWidth > 0 {
+                                leftRoundedAxisSegment(color: AppColor.danger, width: debtBarWidth)
+                            }
                         }
                         .frame(width: halfWidth, alignment: .trailing)
 
@@ -363,13 +366,17 @@ struct AssetBalanceAxis: View {
 
                         ZStack(alignment: .leading) {
                             HStack(spacing: 0) {
-                                Capsule()
-                                    .fill(AppColor.success)
-                                    .frame(width: max(holdingWidth, holdings > 0 ? 4 : 0))
+                                if holdingBarWidth > 0 {
+                                    if fundBarWidth > 0 {
+                                        flatAxisSegment(color: AppColor.success, width: holdingBarWidth)
+                                    } else {
+                                        rightRoundedAxisSegment(color: AppColor.success, width: holdingBarWidth)
+                                    }
+                                }
 
-                                Capsule()
-                                    .fill(AppColor.muted.opacity(0.65))
-                                    .frame(width: max(fundWidth, fundHoldings > 0 ? 4 : 0))
+                                if fundBarWidth > 0 {
+                                    rightRoundedAxisSegment(color: AppColor.muted.opacity(0.65), width: fundBarWidth)
+                                }
                             }
                         }
                         .frame(width: halfWidth, alignment: .leading)
@@ -385,6 +392,40 @@ struct AssetBalanceAxis: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(AppColor.line.opacity(0.8), lineWidth: 1)
         )
+    }
+
+    private func leftRoundedAxisSegment(color: Color, width: CGFloat) -> some View {
+        UnevenRoundedRectangle(
+            cornerRadii: RectangleCornerRadii(
+                topLeading: 6,
+                bottomLeading: 6,
+                bottomTrailing: 0,
+                topTrailing: 0
+            ),
+            style: .continuous
+        )
+        .fill(color)
+        .frame(width: width, height: 12)
+    }
+
+    private func rightRoundedAxisSegment(color: Color, width: CGFloat) -> some View {
+        UnevenRoundedRectangle(
+            cornerRadii: RectangleCornerRadii(
+                topLeading: 0,
+                bottomLeading: 0,
+                bottomTrailing: 6,
+                topTrailing: 6
+            ),
+            style: .continuous
+        )
+        .fill(color)
+        .frame(width: width, height: 12)
+    }
+
+    private func flatAxisSegment(color: Color, width: CGFloat) -> some View {
+        Rectangle()
+            .fill(color)
+            .frame(width: width, height: 12)
     }
 }
 
