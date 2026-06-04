@@ -462,26 +462,32 @@ struct TransactionsView: View {
     var isActive = true
     @State private var message: String?
     @State private var listResetID = UUID()
+    @State private var selectedYear = Calendar.current.component(.year, from: Date())
+    @State private var selectedMonth = Calendar.current.component(.month, from: Date())
 
     private var sortedTransactions: [MoneyTransaction] {
         store.transactions.sorted { $0.occurredAt > $1.occurredAt }
     }
 
+    private var availableYears: [Int] {
+        Array(1998...2100)
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(sortedTransactions) { transaction in
-                    TransactionRow(transaction: transaction)
-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                deleteTransaction(transaction)
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .tint(.red)
-                        }
-                }
+            VStack(spacing: 0) {
+                MonthTransactionCalendarView(
+                    store: store,
+                    transactions: sortedTransactions,
+                    selectedYear: $selectedYear,
+                    selectedMonth: $selectedMonth,
+                    availableYears: availableYears
+                )
+                .padding([.horizontal, .top])
+
+                Spacer()
             }
+            .background(AppColor.background)
             .id(listResetID)
             .alert("删除失败", isPresented: Binding(
                 get: { message != nil },
@@ -505,6 +511,247 @@ struct TransactionsView: View {
         } catch {
             message = error.localizedDescription
         }
+    }
+}
+
+struct MonthTransactionCalendarView: View {
+    var store: AppStore
+    var transactions: [MoneyTransaction]
+    @Binding var selectedYear: Int
+    @Binding var selectedMonth: Int
+    var availableYears: [Int]
+
+    private let dayColumns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+
+    private var calendar: Calendar {
+        Calendar.current
+    }
+
+    private var monthDate: Date {
+        calendar.date(from: DateComponents(year: selectedYear, month: selectedMonth, day: 1)) ?? Date()
+    }
+
+    private var transactionsByDay: [Date: [MoneyTransaction]] {
+        Dictionary(grouping: transactions) {
+            calendar.startOfDay(for: $0.occurredAt)
+        }
+    }
+
+    private var days: [TransactionCalendarDay] {
+        let leadingBlanks = leadingBlankCount
+        let blankDays = (0..<leadingBlanks).map {
+            TransactionCalendarDay(id: "blank-\($0)", day: nil, date: nil, transactions: [])
+        }
+
+        let monthDays = (1...daysInMonth).map { day in
+            let date = calendar.startOfDay(
+                for: calendar.date(from: DateComponents(year: selectedYear, month: selectedMonth, day: day)) ?? monthDate
+            )
+            return TransactionCalendarDay(
+                id: "\(selectedYear)-\(selectedMonth)-\(day)",
+                day: day,
+                date: date,
+                transactions: transactionsByDay[date] ?? []
+            )
+        }
+
+        return blankDays + monthDays
+    }
+
+    private var leadingBlankCount: Int {
+        let weekday = calendar.component(.weekday, from: monthDate)
+        return (weekday - calendar.firstWeekday + 7) % 7
+    }
+
+    private var daysInMonth: Int {
+        calendar.range(of: .day, in: .month, for: monthDate)?.count ?? 0
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Menu {
+                    ForEach(availableYears, id: \.self) { year in
+                        Button {
+                            selectedYear = year
+                        } label: {
+                            Text(verbatim: "\(year) 年")
+                        }
+                    }
+                } label: {
+                    Text(verbatim: "\(selectedYear) 年")
+                        .font(.headline)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppColor.ink)
+
+                Spacer()
+
+                Menu {
+                    ForEach(1...12, id: \.self) { month in
+                        Button {
+                            selectedMonth = month
+                        } label: {
+                            Text(verbatim: "\(month) 月")
+                        }
+                    }
+                } label: {
+                    Text(verbatim: "\(selectedMonth) 月")
+                        .font(.headline)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppColor.ink)
+            }
+
+            LazyVGrid(columns: dayColumns, spacing: 8) {
+                ForEach(Self.weekdaySymbols, id: \.self) { symbol in
+                    Text(symbol)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AppColor.muted)
+                        .frame(maxWidth: .infinity)
+                }
+
+                ForEach(days) { day in
+                    CalendarDayCell(store: store, day: day)
+                }
+            }
+        }
+        .surface()
+    }
+
+    private static var weekdaySymbols: [String] {
+        let formatter = DateFormatter()
+        var symbols = formatter.shortWeekdaySymbols ?? ["日", "一", "二", "三", "四", "五", "六"]
+        let firstWeekday = Calendar.current.firstWeekday - 1
+        if firstWeekday > 0 {
+            symbols = Array(symbols[firstWeekday...]) + Array(symbols[..<firstWeekday])
+        }
+        return symbols
+    }
+}
+
+struct TransactionCalendarDay: Identifiable {
+    var id: String
+    var day: Int?
+    var date: Date?
+    var transactions: [MoneyTransaction]
+
+    var hasTransactions: Bool {
+        !transactions.isEmpty
+    }
+}
+
+struct CalendarDayCell: View {
+    var store: AppStore
+    var day: TransactionCalendarDay
+
+    var body: some View {
+        Group {
+            if let date = day.date, day.hasTransactions {
+                NavigationLink {
+                    TransactionDateDetailView(store: store, date: date)
+                } label: {
+                    cellContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                cellContent
+            }
+        }
+    }
+
+    private var cellContent: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(day.hasTransactions ? AppColor.primary.opacity(0.16) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(day.hasTransactions ? AppColor.primary.opacity(0.45) : AppColor.line.opacity(0.35), lineWidth: 1)
+                )
+
+            if let dayNumber = day.day {
+                Text(verbatim: "\(dayNumber)")
+                    .font(.title3.weight(day.hasTransactions ? .semibold : .regular))
+                    .foregroundStyle(day.hasTransactions ? AppColor.primary : AppColor.ink)
+                    .padding(.top, 2)
+            }
+        }
+        .frame(height: 38)
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+struct TransactionDateDetailView: View {
+    var store: AppStore
+    var date: Date
+    @State private var message: String?
+
+    private var sortedTransactions: [MoneyTransaction] {
+        let calendar = Calendar.current
+        return store.transactions
+            .filter { calendar.isDate($0.occurredAt, inSameDayAs: date) }
+            .sorted { $0.occurredAt > $1.occurredAt }
+    }
+
+    var body: some View {
+        List {
+            ForEach(sortedTransactions) { transaction in
+                TransactionRow(transaction: transaction)
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            deleteTransaction(transaction)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .tint(.red)
+                    }
+            }
+        }
+        .listStyle(.plain)
+        .navigationTitle(Self.dateText(for: date))
+        .alert("删除失败", isPresented: Binding(
+            get: { message != nil },
+            set: { if !$0 { message = nil } }
+        )) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(message ?? "")
+        }
+    }
+
+    private func deleteTransaction(_ transaction: MoneyTransaction) {
+        do {
+            try store.deleteTransaction(transaction)
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private static func dateText(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M 月 d 日 EEEE"
+        return formatter.string(from: date)
+    }
+}
+
+struct EmptyTransactionsView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "calendar.badge.plus")
+                .font(.largeTitle)
+                .foregroundStyle(AppColor.primary)
+
+            Text("这个月还没有账目")
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
+
+            Text("切换年份或月份，可以查看其他时间的明细。")
+                .font(.subheadline)
+                .foregroundStyle(AppColor.muted)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .surface()
     }
 }
 
