@@ -11,6 +11,12 @@ final class AppStore {
         }
     }
 
+    var initializationMode: Bool {
+        didSet {
+            UserDefaults.standard.set(initializationMode, forKey: "initializationMode")
+        }
+    }
+
     var transactions: [MoneyTransaction]
     var expenseCategories: [MoneyCategory]
     var incomeCategories: [MoneyCategory]
@@ -38,7 +44,7 @@ final class AppStore {
             .reduce(0, +)
         let debt = usableAssets
             .filter(\.isDebtLike)
-            .map { max($0.balance, 0) + $0.totalRepayment }
+            .map(\.totalDebt)
             .reduce(0, +)
 
         return AssetOverview(holdings: holdings, fundHoldings: fundHoldings, debt: debt)
@@ -61,6 +67,7 @@ final class AppStore {
         let savedAppearance = UserDefaults.standard.string(forKey: "appearance")
             .flatMap(AppAppearance.init(rawValue:))
         appearance = savedAppearance ?? .system
+        initializationMode = UserDefaults.standard.bool(forKey: "initializationMode")
 
         do {
             let database: SQLiteDatabase
@@ -108,6 +115,8 @@ final class AppStore {
             expenseCategories
         case .income:
             incomeCategories
+        case .fundProfit:
+            []
         }
     }
 
@@ -172,6 +181,8 @@ final class AppStore {
         title: String,
         installmentMonths: Int? = nil
     ) throws {
+        guard kind != .fundProfit else { return }
+
         let usesInstallmentPlan = kind == .expense
             && (installmentMonths ?? 0) > 0
             && (asset(for: account)?.kind.supportsInstallment ?? false)
@@ -277,10 +288,19 @@ final class AppStore {
         case .investment:
             nextAssets[index].fundCost = (nextAssets[index].fundCost ?? 0) + amount
         }
+        if kind == .investment,
+           (nextAssets[index].fundMarketValue ?? 0) == 0 {
+            nextAssets[index].fundMarketValue = nextAssets[index].fundCost
+        }
         nextAssets[index].balance = nextAssets[index].fundCurrentValue
 
         try persistAssets(nextAssets)
         assets = nextAssets
+    }
+
+    func addFundProfit(assetID: UUID, amount: Decimal, note: String) throws {
+        try addFundActivity(assetID: assetID, kind: .valuation, amount: amount, note: note)
+        quickEntryDraft = nil
     }
 
     func asset(for account: MoneyAccount) -> AssetItem? {
@@ -467,6 +487,18 @@ final class AppStore {
             guard let normalizedName = normalizedDefaultAssetName(for: assets[index]) else { continue }
             assets[index].name = normalizedName
             changed = true
+        }
+
+        for index in assets.indices where assets[index].kind == .fund {
+            let cost = assets[index].fundCost ?? 0
+            let marketValue = assets[index].fundMarketValue ?? 0
+            let oldComputedValue = cost + marketValue
+            if cost != 0,
+               assets[index].balance == oldComputedValue,
+               assets[index].balance != marketValue {
+                assets[index].fundMarketValue = assets[index].balance
+                changed = true
+            }
         }
 
         if changed {

@@ -4,6 +4,7 @@ import SwiftUI
 enum TransactionKind: String, CaseIterable, Identifiable {
     case expense
     case income
+    case fundProfit
 
     var id: String { rawValue }
 
@@ -11,6 +12,7 @@ enum TransactionKind: String, CaseIterable, Identifiable {
         switch self {
         case .expense: "支出"
         case .income: "收入"
+        case .fundProfit: "基金盈亏"
         }
     }
 }
@@ -161,11 +163,24 @@ struct AssetItem: Identifiable, Hashable {
 
     var fundCurrentValue: Decimal {
         guard kind == .fund else { return balance }
-        return (fundCost ?? 0) + (fundMarketValue ?? 0)
+        return fundMarketValue ?? balance
+    }
+
+    var fundProfit: Decimal {
+        fundCurrentValue - (fundCost ?? 0)
     }
 
     var nextMonthRepayment: Decimal {
         repayments.first { $0.monthOffset == 1 }?.amount ?? 0
+    }
+
+    var currentMonthRepayment: Decimal {
+        repayments.first { $0.monthOffset == 0 }?.amount ?? 0
+    }
+
+    var totalDebt: Decimal {
+        guard isDebtLike else { return 0 }
+        return max(balance, totalRepayment)
     }
 
     var isDebtLike: Bool {
@@ -256,6 +271,8 @@ enum LedgerCalculator {
                     balances[transaction.account.id, default: 0] += transaction.amount
                 case .income:
                     balances[transaction.account.id, default: 0] -= transaction.amount
+                case .fundProfit:
+                    break
                 }
             } else {
                 switch transaction.kind {
@@ -263,6 +280,8 @@ enum LedgerCalculator {
                     balances[transaction.account.id, default: 0] -= transaction.amount
                 case .income:
                     balances[transaction.account.id, default: 0] += transaction.amount
+                case .fundProfit:
+                    break
                 }
             }
         }

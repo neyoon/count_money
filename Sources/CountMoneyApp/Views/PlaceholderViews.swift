@@ -16,6 +16,7 @@ struct EntryView: View {
     @State private var isApplyingDraft = false
     @State private var useInstallment = false
     @State private var installmentMonths = 3
+    @State private var isFundLoss = false
     @State private var appliedDraftID: UUID?
 
     private var visibleCategories: [MoneyCategory] {
@@ -34,19 +35,44 @@ struct EntryView: View {
 
     private var selectedAccount: MoneyAccount? {
         if let selectedAccountID,
-           let account = store.paymentAccounts.first(where: { $0.id == selectedAccountID }) {
+           let account = entryAccounts.first(where: { $0.id == selectedAccountID }) {
             return account
         }
 
-        return store.paymentAccounts.first
+        return entryAccounts.first
     }
 
     private var selectedAsset: AssetItem? {
         selectedAccount.flatMap(store.asset(for:))
     }
 
+    private var fundAccounts: [MoneyAccount] {
+        store.ledgerAssets
+            .filter { $0.kind == .fund }
+            .map { asset in
+                MoneyAccount(
+                    id: asset.id,
+                    name: asset.name,
+                    symbolName: asset.kind.symbolName,
+                    balance: asset.fundCurrentValue
+                )
+            }
+    }
+
+    private var entryAccounts: [MoneyAccount] {
+        selectedKind == .fundProfit ? fundAccounts : store.paymentAccounts
+    }
+
     private var canUseInstallment: Bool {
         selectedKind == .expense && (selectedAsset?.kind.supportsInstallment ?? false)
+    }
+
+    private var canSaveEntry: Bool {
+        guard let parsedAmount, selectedAccount != nil else { return false }
+        if selectedKind == .fundProfit {
+            return parsedAmount > 0
+        }
+        return parsedAmount > 0
     }
 
     var body: some View {
@@ -63,17 +89,24 @@ struct EntryView: View {
                         if let first = store.categories(for: newValue).first {
                             selectedCategory = first
                         }
+                        selectedAccountID = entryAccounts.first?.id
                         if newValue != .expense {
                             useInstallment = false
+                        }
+                        if newValue != .fundProfit {
+                            isFundLoss = false
                         }
                     }
 
                     amountSection
+                    fundProfitDirectionSection
                     draftSection
                     accountSection
                     installmentSection
                     categorySection
-                    screenshotButton
+                    if selectedKind != .fundProfit {
+                        screenshotButton
+                    }
                     saveButton
 
                     Spacer()
@@ -128,28 +161,46 @@ struct EntryView: View {
         .surface()
     }
 
+    @ViewBuilder
+    private var fundProfitDirectionSection: some View {
+        if selectedKind == .fundProfit {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("方向")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
+
+                Picker("方向", selection: $isFundLoss) {
+                    Text("+").tag(false)
+                    Text("-").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+            .surface()
+        }
+    }
+
     private var accountSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(selectedKind == .income ? "收款账户" : "支付账户")
+            Text(accountTitle)
                 .font(.headline)
                 .foregroundStyle(AppColor.ink)
 
-            if store.paymentAccounts.isEmpty {
-                Text("请先在资产页添加银行卡、支付宝或微信账户。")
+            if entryAccounts.isEmpty {
+                Text(selectedKind == .fundProfit ? "请先在资产页添加基金。" : "请先在资产页添加银行卡、支付宝或微信账户。")
                     .font(.subheadline)
                     .foregroundStyle(AppColor.muted)
             } else {
                 Picker("账户", selection: Binding(
-                    get: { selectedAccount?.id ?? store.paymentAccounts[0].id },
+                    get: { selectedAccount?.id ?? entryAccounts[0].id },
                     set: { newValue in
                         selectedAccountID = newValue
-                        let asset = store.assets.first { $0.id == newValue }
+                        let asset = store.ledgerAssets.first { $0.id == newValue }
                         if !(asset?.kind.supportsInstallment ?? false) {
                             useInstallment = false
                         }
                     }
                 )) {
-                    ForEach(store.paymentAccounts) { account in
+                    ForEach(entryAccounts) { account in
                         Label(account.name, systemImage: account.symbolName)
                             .tag(account.id)
                     }
@@ -159,6 +210,17 @@ struct EntryView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .surface()
+    }
+
+    private var accountTitle: String {
+        switch selectedKind {
+        case .expense:
+            return "支付账户"
+        case .income:
+            return "收款账户"
+        case .fundProfit:
+            return "基金"
+        }
     }
 
     @ViewBuilder
@@ -196,7 +258,7 @@ struct EntryView: View {
 
     @ViewBuilder
     private var draftSection: some View {
-        if let draft = store.quickEntryDraft {
+        if selectedKind != .fundProfit, let draft = store.quickEntryDraft {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("截图识别结果", systemImage: "viewfinder")
@@ -235,23 +297,25 @@ struct EntryView: View {
 
     @ViewBuilder
     private var categorySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(selectedKind == .expense ? "支出分类" : "收入分类")
-                .font(.headline)
-                .foregroundStyle(AppColor.ink)
+        if selectedKind != .fundProfit {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(selectedKind == .expense ? "支出分类" : "收入分类")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
 
-            LazyVGrid(columns: categoryColumns, spacing: 10) {
-                ForEach(visibleCategories) { category in
-                    CategoryButton(
-                        category: category,
-                        isSelected: category.id == selectedCategory.id
-                    ) {
-                        selectedCategory = category
+                LazyVGrid(columns: categoryColumns, spacing: 10) {
+                    ForEach(visibleCategories) { category in
+                        CategoryButton(
+                            category: category,
+                            isSelected: category.id == selectedCategory.id
+                        ) {
+                            selectedCategory = category
+                        }
                     }
                 }
             }
+            .surface()
         }
-        .surface()
     }
 
     private var screenshotButton: some View {
@@ -283,21 +347,25 @@ struct EntryView: View {
     private var saveButton: some View {
         Button {
             guard let parsedAmount,
-                  parsedAmount > 0,
                   let selectedAccount
             else {
                 return
             }
 
             do {
-                try store.addTransaction(
-                    kind: selectedKind,
-                    amount: parsedAmount,
-                    category: selectedCategory,
-                    account: selectedAccount,
-                    title: selectedCategory.name,
-                    installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil
-                )
+                if selectedKind == .fundProfit {
+                    let signedAmount = isFundLoss ? -parsedAmount : parsedAmount
+                    try store.addFundProfit(assetID: selectedAccount.id, amount: signedAmount, note: "")
+                } else {
+                    try store.addTransaction(
+                        kind: selectedKind,
+                        amount: parsedAmount,
+                        category: selectedCategory,
+                        account: selectedAccount,
+                        title: selectedCategory.name,
+                        installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil
+                    )
+                }
                 amountText = ""
                 useInstallment = false
             } catch {
@@ -311,7 +379,7 @@ struct EntryView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(AppColor.success)
-        .disabled(parsedAmount == nil || (parsedAmount ?? 0) <= 0 || selectedAccount == nil)
+        .disabled(!canSaveEntry)
     }
 
     private func recognizeAmount(from item: PhotosPickerItem) async {
@@ -435,12 +503,11 @@ struct AccountsView: View {
     var store: AppStore
     @State private var isAddingAsset = false
     @State private var editingAsset: AssetItem?
-    @State private var recordingFundAsset: AssetItem?
     @State private var assetPendingDeletion: AssetItem?
     @State private var message: String?
 
-    private var orderedAssets: [AssetItem] {
-        store.ledgerAssets.sorted {
+    private var regularAssets: [AssetItem] {
+        store.ledgerAssets.filter { !$0.isDebtLike }.sorted {
             if $0.kind == .fund && $1.kind != .fund {
                 return true
             }
@@ -451,17 +518,51 @@ struct AccountsView: View {
         }
     }
 
+    private var debtAssets: [AssetItem] {
+        store.ledgerAssets.filter(\.isDebtLike)
+    }
+
+    private var liveBalanceScaleBase: Double {
+        let maxValue = regularAssets
+            .map { abs(liveBalanceValue(for: $0).doubleValue) }
+            .max() ?? 0
+        return max(maxValue, 1)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(orderedAssets) { asset in
-                        AssetCard(
-                            asset: asset,
-                            onEdit: { editingAsset = store.assets.first { $0.id == asset.id } ?? asset },
-                            onFundRecord: { recordingFundAsset = asset },
-                            onDelete: { assetPendingDeletion = asset }
-                        )
+                VStack(alignment: .leading, spacing: 18) {
+                    AssetSection(title: "实时余额") {
+                        ForEach(regularAssets) { asset in
+                            AssetBalanceRow(asset: asset, scaleBase: liveBalanceScaleBase)
+                        }
+                    }
+
+                    if !debtAssets.isEmpty {
+                        AssetSection(title: "待还款") {
+                            ForEach(debtAssets) { asset in
+                                AssetCard(
+                                    asset: asset,
+                                    canManage: store.initializationMode,
+                                    onEdit: { editingAsset = store.assets.first { $0.id == asset.id } ?? asset },
+                                    onDelete: { assetPendingDeletion = asset }
+                                )
+                            }
+                        }
+                    }
+
+                    if store.initializationMode {
+                        AssetSection(title: "初始化数据") {
+                            ForEach(store.ledgerAssets) { asset in
+                                AssetCard(
+                                    asset: asset,
+                                    canManage: true,
+                                    onEdit: { editingAsset = store.assets.first { $0.id == asset.id } ?? asset },
+                                    onDelete: { assetPendingDeletion = asset }
+                                )
+                            }
+                        }
                     }
                 }
                 .padding()
@@ -469,10 +570,12 @@ struct AccountsView: View {
             .background(AppColor.background)
             .navigationTitle("资产")
             .toolbar {
-                Button {
-                    isAddingAsset = true
-                } label: {
-                    Image(systemName: "plus")
+                if store.initializationMode {
+                    Button {
+                        isAddingAsset = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
             .sheet(isPresented: $isAddingAsset) {
@@ -480,9 +583,6 @@ struct AccountsView: View {
             }
             .sheet(item: $editingAsset) { asset in
                 AssetEditorView(store: store, asset: asset)
-            }
-            .sheet(item: $recordingFundAsset) { asset in
-                FundActivityView(store: store, asset: asset)
             }
             .confirmationDialog(
                 "删除资产",
@@ -517,12 +617,36 @@ struct AccountsView: View {
             message = error.localizedDescription
         }
     }
+
+    private func liveBalanceValue(for asset: AssetItem) -> Decimal {
+        if asset.kind == .fund {
+            return asset.fundCurrentValue
+        }
+        return asset.balance
+    }
+}
+
+struct AssetSection<Content: View>: View {
+    var title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
+
+            VStack(spacing: 12) {
+                content
+            }
+        }
+    }
 }
 
 struct AssetCard: View {
     var asset: AssetItem
+    var canManage: Bool
     var onEdit: () -> Void
-    var onFundRecord: () -> Void
     var onDelete: () -> Void
 
     var body: some View {
@@ -546,28 +670,27 @@ struct AssetCard: View {
 
                 Spacer()
 
-                Button(action: onEdit) {
-                    Image(systemName: "pencil")
-                }
-                .buttonStyle(.borderless)
+                if canManage {
+                    Button(action: onEdit) {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.borderless)
 
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
+                    Button(role: .destructive, action: onDelete) {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
             }
 
             if asset.kind == .fund {
-                AssetValueRow(title: "基金资产", value: MoneyFormat.yuan(asset.fundCurrentValue))
-                AssetValueRow(title: "累计盈亏", value: MoneyFormat.yuan(asset.fundMarketValue ?? 0, signed: true))
+                AssetValueRow(title: "当前资产", value: MoneyFormat.yuan(asset.fundCurrentValue))
                 AssetValueRow(title: "持有成本", value: MoneyFormat.yuan(asset.fundCost ?? 0))
-
-                Button(action: onFundRecord) {
-                    Label("记录盈亏 / 投入", systemImage: "plus.circle.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(AppColor.primary)
+                AssetValueRow(
+                    title: "总盈亏",
+                    value: MoneyFormat.yuan(asset.fundProfit, signed: asset.fundProfit > 0),
+                    color: asset.fundProfit < 0 ? AppColor.danger : (asset.fundProfit > 0 ? AppColor.success : AppColor.muted)
+                )
 
                 if !asset.fundActivities.isEmpty {
                     VStack(spacing: 8) {
@@ -578,22 +701,12 @@ struct AssetCard: View {
                     .padding(.top, 4)
                 }
             } else {
-                AssetValueRow(title: asset.isDebtLike ? "当前欠款" : "余额", value: MoneyFormat.yuan(asset.balance))
+                AssetValueRow(title: asset.isDebtLike ? "总欠款" : "余额", value: MoneyFormat.yuan(asset.isDebtLike ? asset.totalDebt : asset.balance))
             }
 
             if asset.isDebtLike {
-                AssetValueRow(title: "总待还", value: MoneyFormat.yuan(asset.totalRepayment))
+                AssetValueRow(title: "本月待还", value: MoneyFormat.yuan(asset.currentMonthRepayment))
                 AssetValueRow(title: "下月待还", value: MoneyFormat.yuan(asset.nextMonthRepayment))
-
-                DisclosureGroup("24 个月待还计划") {
-                    VStack(spacing: 8) {
-                        ForEach(asset.repayments) { repayment in
-                            AssetValueRow(title: repayment.title, value: MoneyFormat.yuan(repayment.amount))
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .font(.subheadline.weight(.medium))
             }
         }
         .surface()
@@ -632,8 +745,19 @@ struct FundActivityRow: View {
 
             Text(MoneyFormat.yuan(record.amount, signed: record.kind == .valuation))
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(record.kind == .valuation && record.amount < 0 ? AppColor.danger : AppColor.ink)
+                .foregroundStyle(fundActivityAmountColor)
         }
+    }
+
+    private var fundActivityAmountColor: Color {
+        guard record.kind == .valuation else { return AppColor.ink }
+        if record.amount < 0 {
+            return AppColor.danger
+        }
+        if record.amount > 0 {
+            return AppColor.success
+        }
+        return AppColor.muted
     }
 }
 
@@ -742,13 +866,15 @@ struct AssetEditorView: View {
                 Section("基本信息") {
                     TextField("名称", text: $asset.name)
                     LabeledContent("类型", value: asset.kind.title)
-                    moneyField(asset.kind.supportsRepayment ? "当前欠款" : "余额", text: $balanceText)
+                    if asset.kind != .fund {
+                        moneyField(asset.kind.supportsRepayment ? "总欠款" : "余额", text: $balanceText)
+                    }
                 }
 
                 if asset.kind == .fund {
                     Section("基金") {
                         moneyField("持有成本", text: $fundCostText)
-                        moneyField("累计盈亏", text: $fundMarketValueText)
+                        moneyField("当前资产", text: $fundMarketValueText)
                     }
                 }
 
@@ -798,11 +924,13 @@ struct AssetEditorView: View {
     }
 
     private func save() throws {
-        asset.balance = try moneyValue(balanceText, field: asset.kind.supportsRepayment ? "当前欠款" : "余额")
+        if asset.kind != .fund {
+            asset.balance = try moneyValue(balanceText, field: asset.kind.supportsRepayment ? "总欠款" : "余额")
+        }
 
         if asset.kind == .fund {
             asset.fundCost = try moneyValue(fundCostText, field: "持有成本")
-            asset.fundMarketValue = try moneyValue(fundMarketValueText, field: "累计盈亏")
+            asset.fundMarketValue = try moneyValue(fundMarketValueText, field: "当前资产")
             asset.balance = asset.fundCurrentValue
         }
 
@@ -836,6 +964,7 @@ struct AssetEditorView: View {
 struct AssetValueRow: View {
     var title: String
     var value: String
+    var color: Color = AppColor.ink
 
     var body: some View {
         HStack {
@@ -845,7 +974,7 @@ struct AssetValueRow: View {
             Spacer()
             Text(value)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(AppColor.ink)
+                .foregroundStyle(color)
         }
     }
 }
@@ -923,6 +1052,13 @@ struct SettingsView: View {
                 }
 
                 Section("数据") {
+                    Toggle(isOn: Binding(
+                        get: { store.initializationMode },
+                        set: { store.initializationMode = $0 }
+                    )) {
+                        Label("初始化数据模式", systemImage: "slider.horizontal.3")
+                    }
+
                     NavigationLink {
                         CategoryManagerView(store: store)
                     } label: {

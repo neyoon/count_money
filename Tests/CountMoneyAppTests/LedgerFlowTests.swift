@@ -119,6 +119,54 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.assetOverview.net, 0)
     }
 
+    func testFundProfitIsCalculatedFromCurrentValueAndCost() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        var fund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+        fund.fundCost = 1_000
+        fund.fundMarketValue = 1_100
+        fund.balance = fund.fundCurrentValue
+        try store.updateAsset(fund)
+
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == fund.id }?.fundCurrentValue, 1_100)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == fund.id }?.fundProfit, 100)
+        XCTAssertEqual(store.assetOverview.fundHoldings, 1_100)
+
+        try store.addFundProfit(assetID: fund.id, amount: -50, note: "")
+
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == fund.id }?.fundCurrentValue, 1_050)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == fund.id }?.fundProfit, 50)
+    }
+
+    func testInstallmentRepaymentPlanCountsAsOverviewDebt() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 100,
+            category: food,
+            account: credit,
+            title: "分期",
+            installmentMonths: 3
+        )
+
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == credit.id }?.totalRepayment, 300)
+        XCTAssertEqual(store.assetOverview.debt, 300)
+    }
+
     func testLegacyDefaultAssetNamesAreNormalizedOnStartup() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")

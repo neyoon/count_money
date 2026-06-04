@@ -26,7 +26,6 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     hero
                     metrics
-                    liveBalances
                     weeklyChart
                     categoryChart
                     recentTransactions
@@ -147,42 +146,6 @@ struct DashboardView: View {
         .surface()
     }
 
-    private var liveBalances: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "实时余额", value: "按资产")
-
-            VStack(spacing: 0) {
-                ForEach(liveBalanceAssets) { asset in
-                    AssetBalanceRow(asset: asset, scaleBase: liveBalanceScaleBase)
-
-                    if asset.id != liveBalanceAssets.last?.id {
-                        Divider()
-                            .padding(.leading, 44)
-                    }
-                }
-            }
-        }
-        .surface()
-    }
-
-    private var liveBalanceAssets: [AssetItem] {
-        store.ledgerAssets.filter { !$0.isDebtLike }
-    }
-
-    private var liveBalanceScaleBase: Double {
-        let maxValue = liveBalanceAssets
-            .map { abs(liveBalanceValue(for: $0).doubleValue) }
-            .max() ?? 0
-        return max(maxValue, 1)
-    }
-
-    private func liveBalanceValue(for asset: AssetItem) -> Decimal {
-        if asset.kind == .fund {
-            return asset.fundCurrentValue
-        }
-        return asset.balance
-    }
-
     private var recentTransactions: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -291,8 +254,32 @@ struct AssetBalanceRow: View {
             }
             .frame(height: 7)
             .padding(.leading, 42)
+
+            if asset.kind == .fund {
+                HStack(spacing: 12) {
+                    Text("持有成本 \(MoneyFormat.yuan(asset.fundCost ?? 0))")
+                        .foregroundStyle(AppColor.muted)
+
+                    Spacer()
+
+                    Text("总盈亏 \(MoneyFormat.yuan(asset.fundProfit, signed: asset.fundProfit > 0))")
+                        .foregroundStyle(fundProfitColor)
+                }
+                .font(.caption)
+                .padding(.leading, 42)
+            }
         }
         .padding(.vertical, 9)
+    }
+
+    private var fundProfitColor: Color {
+        if asset.fundProfit < 0 {
+            return AppColor.danger
+        }
+        if asset.fundProfit > 0 {
+            return AppColor.success
+        }
+        return AppColor.muted
     }
 }
 
@@ -539,6 +526,8 @@ struct TransactionRow: View {
             "-\(MoneyFormat.yuan(transaction.amount))"
         case .income:
             MoneyFormat.yuan(transaction.amount, signed: true)
+        case .fundProfit:
+            MoneyFormat.yuan(transaction.amount, signed: transaction.amount > 0)
         }
     }
 
@@ -548,6 +537,8 @@ struct TransactionRow: View {
             AppColor.danger
         case .income:
             AppColor.success
+        case .fundProfit:
+            transaction.amount < 0 ? AppColor.danger : AppColor.success
         }
     }
 
