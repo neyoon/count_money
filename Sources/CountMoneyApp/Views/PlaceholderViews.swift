@@ -2120,6 +2120,7 @@ struct SettingsView: View {
     @State private var exportDocument = JSONExportDocument()
     @State private var isExporting = false
     @State private var isImporting = false
+    @State private var isConfirmingClearData = false
     @State private var message: String?
 
     var body: some View {
@@ -2170,6 +2171,13 @@ struct SettingsView: View {
                     } label: {
                         Label("导入 JSON", systemImage: "square.and.arrow.down")
                     }
+
+                    Button(role: .destructive) {
+                        isConfirmingClearData = true
+                    } label: {
+                        Label("清除所有数据", systemImage: "trash.fill")
+                            .foregroundStyle(AppColor.danger)
+                    }
                 }
             }
             .tabBarScrollableContentInset()
@@ -2185,6 +2193,14 @@ struct SettingsView: View {
             }
             .fileImporter(isPresented: $isImporting, allowedContentTypes: [.json]) { result in
                 importJSON(result)
+            }
+            .alert("清除所有数据？", isPresented: $isConfirmingClearData) {
+                Button("取消", role: .cancel) {}
+                Button("清除", role: .destructive) {
+                    clearData()
+                }
+            } message: {
+                Text("会删除所有账目、资产余额、待还计划、基金记录和自定义分类，并恢复默认数据。此操作无法撤销。")
             }
             .alert("提示", isPresented: Binding(
                 get: { message != nil },
@@ -2218,6 +2234,15 @@ struct SettingsView: View {
 
             try store.importData(Data(contentsOf: url))
             message = "导入完成"
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func clearData() {
+        do {
+            try store.clearAllData()
+            message = "数据已清除"
         } catch {
             message = error.localizedDescription
         }

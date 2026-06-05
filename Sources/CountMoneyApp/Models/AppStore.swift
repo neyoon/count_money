@@ -450,6 +450,22 @@ final class AppStore {
         try importTransactions(records)
     }
 
+    func clearAllData() throws {
+        let defaultExpenseCategories = PreviewData.expenseCategories
+        let defaultIncomeCategories = PreviewData.incomeCategories
+        let defaultAssets = PreviewData.assets
+        let emptyTransactions: [MoneyTransaction] = []
+
+        try persistCategories(defaultExpenseCategories + defaultIncomeCategories)
+        try persistLedger(transactions: emptyTransactions, assets: defaultAssets)
+
+        expenseCategories = defaultExpenseCategories
+        incomeCategories = defaultIncomeCategories
+        assets = defaultAssets
+        transactions = emptyTransactions
+        quickEntryDraft = nil
+    }
+
     private func importLedger(_ exportFile: LedgerExportFile) throws {
         var nextExpenseCategories = expenseCategories
         var nextIncomeCategories = incomeCategories

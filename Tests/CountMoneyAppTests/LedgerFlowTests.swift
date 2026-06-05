@@ -131,6 +131,47 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(importedFund.fundActivities.contains { $0.kind == .valuation && $0.amount == -25 && $0.note == "回撤" })
     }
 
+    func testClearingAllDataRestoresEmptyDefaultLedger() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let account = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let salary = try XCTUnwrap(store.incomeCategories.first { $0.presetKey == "income_salary" })
+        var fund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+
+        try store.addCategory(name: "房租", kind: .expense)
+        try store.addTransaction(kind: .income, amount: 1_000, category: salary, account: account, title: "工资")
+        fund.fundCost = 1_000
+        fund.fundMarketValue = 1_100
+        fund.balance = fund.fundCurrentValue
+        try store.updateAsset(fund)
+        try store.addFundActivity(assetID: fund.id, kind: .valuation, amount: 50, note: "上涨")
+
+        try store.clearAllData()
+
+        XCTAssertTrue(store.transactions.isEmpty)
+        XCTAssertFalse(store.expenseCategories.contains { $0.name == "房租" })
+        XCTAssertEqual(store.assets.count, PreviewData.assets.count)
+        XCTAssertEqual(store.paymentAccounts.first { $0.name == "借记卡" }?.balance, 0)
+        let clearedFund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+        XCTAssertEqual(clearedFund.fundCost, 0)
+        XCTAssertEqual(clearedFund.fundMarketValue, 0)
+        XCTAssertTrue(clearedFund.fundActivities.isEmpty)
+
+        let reopenedStore = AppStore(database: try SQLiteDatabase(url: url))
+        XCTAssertTrue(reopenedStore.transactions.isEmpty)
+        XCTAssertFalse(reopenedStore.expenseCategories.contains { $0.name == "房租" })
+        XCTAssertEqual(reopenedStore.paymentAccounts.first { $0.name == "借记卡" }?.balance, 0)
+        let reopenedFund = try XCTUnwrap(reopenedStore.assets.first { $0.kind == .fund })
+        XCTAssertEqual(reopenedFund.fundCost, 0)
+        XCTAssertEqual(reopenedFund.fundMarketValue, 0)
+        XCTAssertTrue(reopenedFund.fundActivities.isEmpty)
+    }
+
     func testDeletingAccountUsedByTransactionsIsRejected() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
