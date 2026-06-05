@@ -577,25 +577,6 @@ extension Decimal {
     }
 }
 
-extension MoneyTransaction {
-    var exportRecord: TransactionExportRecord {
-        TransactionExportRecord(
-            id: id.uuidString,
-            kind: kind.rawValue,
-            title: title,
-            categoryPresetKey: category.presetKey,
-            accountName: account.name,
-            paymentAccountID: paymentAccount?.id.uuidString,
-            paymentAccountName: paymentAccount?.name,
-            paymentAccountSymbolName: paymentAccount?.symbolName,
-            amount: NSDecimalNumber(decimal: amount).stringValue,
-            installmentMonths: installmentMonths,
-            repaymentAdjustments: repaymentAdjustments,
-            occurredAt: ISO8601DateFormatter().string(from: occurredAt)
-        )
-    }
-}
-
 struct TransactionExportRecord: Codable, Identifiable {
     var id: String
     var kind: String

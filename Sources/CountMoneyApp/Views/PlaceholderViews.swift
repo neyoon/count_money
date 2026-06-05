@@ -107,40 +107,41 @@ struct EntryView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                Picker("类型", selection: $selectedKind) {
-                    ForEach(TransactionKind.allCases) { kind in
-                        Text(kind.title).tag(kind)
+            ScrollView {
+                VStack(spacing: 16) {
+                    Picker("类型", selection: $selectedKind) {
+                        ForEach(TransactionKind.allCases) { kind in
+                            Text(kind.title).tag(kind)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: selectedKind) { _, newValue in
-                    if let first = store.categories(for: newValue).first {
-                        selectedCategory = first
+                    .pickerStyle(.segmented)
+                    .onChange(of: selectedKind) { _, newValue in
+                        if let first = store.categories(for: newValue).first {
+                            selectedCategory = first
+                        }
+                        ensureSelectedAccountsAreValid()
+                        if newValue != .expense || selectedCategory.isRepayment {
+                            useInstallment = false
+                        }
+                        if newValue != .fundProfit {
+                            isFundLoss = false
+                        }
                     }
-                    ensureSelectedAccountsAreValid()
-                    if newValue != .expense || selectedCategory.isRepayment {
-                        useInstallment = false
-                    }
-                    if newValue != .fundProfit {
-                        isFundLoss = false
-                    }
-                }
 
-                amountSection
-                fundProfitDirectionSection
-                draftSection
-                accountSection
-                repaymentPaymentAccountSection
-                installmentSection
-                categorySection
-                saveButton
-                entryDateButton
-
-                Spacer()
+                    amountSection
+                    fundProfitDirectionSection
+                    draftSection
+                    accountSection
+                    repaymentPaymentAccountSection
+                    installmentSection
+                    categorySection
+                    saveButton
+                    entryDateButton
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .top)
             }
             .tabBarScrollableContentInset()
-            .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(AppColor.background)
             .onAppear {
@@ -2169,9 +2170,6 @@ struct SettingsView: View {
                     } label: {
                         Label("导入 JSON", systemImage: "square.and.arrow.down")
                     }
-
-                    Label("iCloud 同步暂未开启", systemImage: "icloud.slash")
-                        .foregroundStyle(AppColor.muted)
                 }
             }
             .tabBarScrollableContentInset()

@@ -76,6 +76,40 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.transactions.count, 3)
     }
 
+    func testJSONExportCanBeImportedByFreshStore() throws {
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-source-\(UUID().uuidString).sqlite")
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-destination-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: destinationURL)
+        }
+
+        let source = AppStore(database: try SQLiteDatabase(url: sourceURL))
+        let account = try XCTUnwrap(source.paymentAccounts.first { $0.name == "借记卡" })
+        let salary = try XCTUnwrap(source.incomeCategories.first { $0.presetKey == "income_salary" })
+        let food = try XCTUnwrap(source.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try source.addTransaction(kind: .income, amount: 1_000, category: salary, account: account, title: "工资")
+        try source.addTransaction(kind: .expense, amount: 38, category: food, account: account, title: "午饭")
+
+        let data = try source.exportData()
+        let records = try JSONDecoder().decode([TransactionExportRecord].self, from: data)
+
+        XCTAssertEqual(records.count, 2)
+        XCTAssertTrue(records.allSatisfy { $0.accountID != nil })
+        XCTAssertTrue(records.allSatisfy { $0.accountKind == AssetKind.debitCard.rawValue })
+
+        let destination = AppStore(database: try SQLiteDatabase(url: destinationURL))
+        try destination.importData(data)
+
+        XCTAssertEqual(destination.transactions.count, 2)
+        XCTAssertTrue(destination.transactions.contains { $0.title == "工资" })
+        XCTAssertTrue(destination.transactions.contains { $0.title == "午饭" })
+        XCTAssertEqual(destination.paymentAccounts.first { $0.name == "借记卡" }?.balance, 962)
+    }
+
     func testDeletingAccountUsedByTransactionsIsRejected() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
