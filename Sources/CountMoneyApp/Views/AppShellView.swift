@@ -4,6 +4,9 @@ import UIKit
 #endif
 
 struct AppShellView: View {
+    private let tabBarHeight: CGFloat = 56
+    private let bottomContentInset: CGFloat = 96
+
     @State private var store = AppStore()
     @State private var selectedTab: AppTab = .home
     @State private var dragOffset: CGFloat = 0
@@ -18,7 +21,7 @@ struct AppShellView: View {
             pageContent
                 .ignoresSafeArea(edges: .bottom)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: 50)
+                    Color.clear.frame(height: bottomContentInset)
                 }
 
             tabBarOverlay
@@ -47,7 +50,7 @@ struct AppShellView: View {
 
     private var tabBarOverlay: some View {
         PlatformTabBar(selectedTab: $selectedTab)
-            .frame(height: 50)
+            .frame(height: tabBarHeight)
             .ignoresSafeArea(edges: .bottom)
     }
 
@@ -122,10 +125,7 @@ struct AppShellView: View {
         case .transactions:
             TransactionsView(store: store, isActive: selectedTab == .transactions)
         case .home:
-            DashboardView(
-                store: store,
-                selectedTab: $selectedTab
-            )
+            DashboardView(store: store)
         case .entry:
             EntryView(store: store)
         case .accounts:

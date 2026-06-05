@@ -3,7 +3,6 @@ import SwiftUI
 
 struct DashboardView: View {
     var store: AppStore
-    @Binding var selectedTab: AppTab
 
     private var overview: MonthlyOverview {
         store.overview
@@ -28,10 +27,10 @@ struct DashboardView: View {
                     metrics
                     weeklyChart
                     categoryChart
-                    recentTransactions
                 }
                 .padding()
             }
+            .tabBarScrollableContentInset()
             .background(AppColor.background)
         }
     }
@@ -66,19 +65,25 @@ struct DashboardView: View {
     }
 
     private var metrics: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            MetricTile(
-                title: "收入",
-                value: MoneyFormat.yuan(overview.income),
-                symbolName: "arrow.down.left.circle.fill",
-                color: AppColor.success
-            )
+        VStack(spacing: 12) {
+            LazyVGrid(columns: columns, spacing: 12) {
+                MetricTile(
+                    title: "本月收入",
+                    value: MoneyFormat.yuan(overview.income),
+                    symbolName: "arrow.down.left.circle.fill",
+                    color: AppColor.success
+                )
 
-            MetricTile(
-                title: "支出",
-                value: MoneyFormat.yuan(overview.expense),
-                symbolName: "arrow.up.right.circle.fill",
-                color: AppColor.danger
+                MetricTile(
+                    title: "本月支出",
+                    value: MoneyFormat.yuan(overview.expense),
+                    symbolName: "arrow.up.right.circle.fill",
+                    color: AppColor.danger
+                )
+            }
+
+            RepaymentMetricTile(
+                value: MoneyFormat.yuan(assetOverview.currentMonthRepayment)
             )
         }
     }
@@ -152,36 +157,6 @@ struct DashboardView: View {
         .surface()
     }
 
-    private var recentTransactions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("最近账目")
-                    .font(.headline)
-                    .foregroundStyle(AppColor.ink)
-
-                Spacer()
-
-                Button("查看全部") {
-                    selectedTab = .transactions
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(AppColor.primary)
-                .buttonStyle(.plain)
-            }
-
-            VStack(spacing: 0) {
-                ForEach(overview.recentTransactions) { transaction in
-                    TransactionRow(transaction: transaction)
-
-                    if transaction.id != overview.recentTransactions.last?.id {
-                        Divider()
-                            .padding(.leading, 52)
-                    }
-                }
-            }
-        }
-        .surface()
-    }
 }
 
 struct AssetBalanceRow: View {
@@ -523,6 +498,33 @@ struct MetricTile: View {
     }
 }
 
+struct RepaymentMetricTile: View {
+    var value: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.title3)
+                .foregroundStyle(AppColor.warning)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("本月待还")
+                    .font(.caption)
+                    .foregroundStyle(AppColor.muted)
+
+                Text(value)
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .surface()
+    }
+}
+
 struct SectionHeader: View {
     var title: String
     var value: String
@@ -589,6 +591,15 @@ struct TransactionRow: View {
         }
     }
 
+    private var accountText: String {
+        if transaction.category.isRepayment,
+           let paymentAccount = transaction.paymentAccount {
+            return "\(paymentAccount.name) -> \(transaction.account.name)"
+        }
+
+        return transaction.account.name
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: transaction.category.symbolName)
@@ -603,7 +614,7 @@ struct TransactionRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppColor.ink)
 
-                Text(transaction.account.name)
+                Text(accountText)
                     .font(.caption)
                     .foregroundStyle(AppColor.muted)
             }

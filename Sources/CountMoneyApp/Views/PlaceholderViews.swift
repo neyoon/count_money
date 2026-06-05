@@ -9,6 +9,7 @@ struct EntryView: View {
     @State private var amountText = ""
     @State private var selectedCategory: MoneyCategory = PreviewData.expenseCategories[0]
     @State private var selectedAccountID: UUID?
+    @State private var selectedPaymentAccountID: UUID?
     @State private var selectedImageItem: PhotosPickerItem?
     @State private var ocrError: String?
     @State private var saveError: String?
@@ -46,6 +47,15 @@ struct EntryView: View {
         selectedAccount.flatMap(store.asset(for:))
     }
 
+    private var selectedPaymentAccount: MoneyAccount? {
+        if let selectedPaymentAccountID,
+           let account = repaymentPaymentAccounts.first(where: { $0.id == selectedPaymentAccountID }) {
+            return account
+        }
+
+        return repaymentPaymentAccounts.first
+    }
+
     private var fundAccounts: [MoneyAccount] {
         store.ledgerAssets
             .filter { $0.kind == .fund }
@@ -60,15 +70,36 @@ struct EntryView: View {
     }
 
     private var entryAccounts: [MoneyAccount] {
-        selectedKind == .fundProfit ? fundAccounts : store.paymentAccounts
+        switch selectedKind {
+        case .fundProfit:
+            fundAccounts
+        case .expense where selectedCategory.isRepayment:
+            store.repaymentAccounts
+        case .expense, .income:
+            store.paymentAccounts
+        }
     }
 
     private var canUseInstallment: Bool {
-        selectedKind == .expense && (selectedAsset?.kind.supportsInstallment ?? false)
+        selectedKind == .expense
+            && !selectedCategory.isRepayment
+            && (selectedAsset?.kind.supportsInstallment ?? false)
+    }
+
+    private var isRepaymentEntry: Bool {
+        selectedKind == .expense && selectedCategory.isRepayment
+    }
+
+    private var repaymentPaymentAccounts: [MoneyAccount] {
+        store.repaymentPaymentAccounts
+            .filter { $0.id != selectedAccount?.id }
     }
 
     private var canSaveEntry: Bool {
         guard let parsedAmount, selectedAccount != nil else { return false }
+        if isRepaymentEntry, selectedPaymentAccount == nil {
+            return false
+        }
         if selectedKind == .fundProfit {
             return parsedAmount > 0
         }
@@ -90,7 +121,8 @@ struct EntryView: View {
                             selectedCategory = first
                         }
                         selectedAccountID = entryAccounts.first?.id
-                        if newValue != .expense {
+                        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+                        if newValue != .expense || selectedCategory.isRepayment {
                             useInstallment = false
                         }
                         if newValue != .fundProfit {
@@ -102,21 +134,26 @@ struct EntryView: View {
                     fundProfitDirectionSection
                     draftSection
                     accountSection
+                    repaymentPaymentAccountSection
                     installmentSection
                     categorySection
                     saveButton
-                    if selectedKind != .fundProfit {
+                    if selectedKind == .expense || selectedKind == .income {
                         screenshotButton
                     }
 
                     Spacer()
                 }
             }
+            .tabBarScrollableContentInset()
             .padding()
             .background(AppColor.background)
             .onAppear {
                 if selectedAccountID == nil {
                     selectedAccountID = store.paymentAccounts.first?.id
+                }
+                if selectedPaymentAccountID == nil {
+                    selectedPaymentAccountID = store.repaymentPaymentAccounts.first?.id
                 }
                 applyQuickEntryDraftIfNeeded(store.quickEntryDraft)
             }
@@ -185,7 +222,7 @@ struct EntryView: View {
                 .foregroundStyle(AppColor.ink)
 
             if entryAccounts.isEmpty {
-                Text(selectedKind == .fundProfit ? "请先在资产页添加基金。" : "请先在资产页添加银行卡、支付宝或微信账户。")
+                Text(emptyAccountText)
                     .font(.subheadline)
                     .foregroundStyle(AppColor.muted)
             } else {
@@ -193,8 +230,9 @@ struct EntryView: View {
                     get: { selectedAccount?.id ?? entryAccounts[0].id },
                     set: { newValue in
                         selectedAccountID = newValue
+                        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
                         let asset = store.ledgerAssets.first { $0.id == newValue }
-                        if !(asset?.kind.supportsInstallment ?? false) {
+                        if selectedCategory.isRepayment || !(asset?.kind.supportsInstallment ?? false) {
                             useInstallment = false
                         }
                     }
@@ -211,14 +249,57 @@ struct EntryView: View {
         .surface()
     }
 
+    @ViewBuilder
+    private var repaymentPaymentAccountSection: some View {
+        if isRepaymentEntry {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("支付账户")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
+
+                if repaymentPaymentAccounts.isEmpty {
+                    Text("请先在资产页添加可支付的余额账户。")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColor.muted)
+                } else {
+                    Picker("支付账户", selection: Binding(
+                        get: { selectedPaymentAccount?.id ?? repaymentPaymentAccounts[0].id },
+                        set: { selectedPaymentAccountID = $0 }
+                    )) {
+                        ForEach(repaymentPaymentAccounts) { account in
+                            Label(account.name, systemImage: account.symbolName)
+                                .tag(account.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .surface()
+        }
+    }
+
     private var accountTitle: String {
         switch selectedKind {
+        case .expense where selectedCategory.isRepayment:
+            return "还款账户"
         case .expense:
             return "支付账户"
         case .income:
             return "收款账户"
         case .fundProfit:
             return "基金"
+        }
+    }
+
+    private var emptyAccountText: String {
+        switch selectedKind {
+        case .fundProfit:
+            return "请先在资产页添加基金。"
+        case .expense where selectedCategory.isRepayment:
+            return "请先在资产页添加信用卡、花呗或其他待还账户。"
+        case .expense, .income:
+            return "请先在资产页添加银行卡、支付宝或微信账户。"
         }
     }
 
@@ -257,7 +338,7 @@ struct EntryView: View {
 
     @ViewBuilder
     private var draftSection: some View {
-        if selectedKind != .fundProfit, let draft = store.quickEntryDraft {
+        if (selectedKind == .expense || selectedKind == .income), let draft = store.quickEntryDraft {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Label("截图识别结果", systemImage: "viewfinder")
@@ -296,7 +377,7 @@ struct EntryView: View {
 
     @ViewBuilder
     private var categorySection: some View {
-        if selectedKind != .fundProfit {
+        if selectedKind == .expense || selectedKind == .income {
             VStack(alignment: .leading, spacing: 12) {
                 Text(selectedKind == .expense ? "支出分类" : "收入分类")
                     .font(.headline)
@@ -308,7 +389,7 @@ struct EntryView: View {
                             category: category,
                             isSelected: category.id == selectedCategory.id
                         ) {
-                            selectedCategory = category
+                            selectCategory(category)
                         }
                     }
                 }
@@ -362,6 +443,7 @@ struct EntryView: View {
                         category: selectedCategory,
                         account: selectedAccount,
                         title: selectedCategory.name,
+                        paymentAccount: isRepaymentEntry ? selectedPaymentAccount : nil,
                         installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil
                     )
                 }
@@ -403,6 +485,15 @@ struct EntryView: View {
             }
         } catch {
             ocrError = error.localizedDescription
+        }
+    }
+
+    private func selectCategory(_ category: MoneyCategory) {
+        selectedCategory = category
+        selectedAccountID = entryAccounts.first?.id
+        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+        if category.isRepayment {
+            useInstallment = false
         }
     }
 
@@ -469,24 +560,36 @@ struct TransactionsView: View {
         store.transactions.sorted { $0.occurredAt > $1.occurredAt }
     }
 
+    private var recentTransactions: [MoneyTransaction] {
+        store.overview.recentTransactions
+    }
+
     private var availableYears: [Int] {
         Array(1998...2100)
     }
 
+    private var availableMonths: [Int] {
+        Array(1...12)
+    }
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                MonthTransactionCalendarView(
-                    store: store,
-                    transactions: sortedTransactions,
-                    selectedYear: $selectedYear,
-                    selectedMonth: $selectedMonth,
-                    availableYears: availableYears
-                )
-                .padding([.horizontal, .top])
+            ScrollView {
+                VStack(spacing: 16) {
+                    MonthTransactionCalendarView(
+                        store: store,
+                        transactions: sortedTransactions,
+                        selectedYear: $selectedYear,
+                        selectedMonth: $selectedMonth,
+                        availableYears: availableYears,
+                        availableMonths: availableMonths
+                    )
 
-                Spacer()
+                    RecentTransactionsSection(transactions: recentTransactions)
+                }
+                .padding([.horizontal, .top])
             }
+            .tabBarScrollableContentInset()
             .background(AppColor.background)
             .id(listResetID)
             .alert("删除失败", isPresented: Binding(
@@ -500,18 +603,20 @@ struct TransactionsView: View {
             .onChange(of: isActive) { _, isActive in
                 if !isActive {
                     listResetID = UUID()
+                } else {
+                    resetSelectedDateToCurrentMonth()
                 }
             }
+            .onAppear(perform: resetSelectedDateToCurrentMonth)
         }
     }
 
-    private func deleteTransaction(_ transaction: MoneyTransaction) {
-        do {
-            try store.deleteTransaction(transaction)
-        } catch {
-            message = error.localizedDescription
-        }
+    private func resetSelectedDateToCurrentMonth() {
+        let calendar = Calendar.current
+        selectedYear = calendar.component(.year, from: Date())
+        selectedMonth = calendar.component(.month, from: Date())
     }
+
 }
 
 struct MonthTransactionCalendarView: View {
@@ -520,6 +625,8 @@ struct MonthTransactionCalendarView: View {
     @Binding var selectedYear: Int
     @Binding var selectedMonth: Int
     var availableYears: [Int]
+    var availableMonths: [Int]
+    @State private var isSelectingMonth = false
 
     private let dayColumns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
 
@@ -570,37 +677,22 @@ struct MonthTransactionCalendarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Menu {
-                    ForEach(availableYears, id: \.self) { year in
-                        Button {
-                            selectedYear = year
-                        } label: {
-                            Text(verbatim: "\(year) 年")
-                        }
-                    }
-                } label: {
-                    Text(verbatim: "\(selectedYear) 年")
-                        .font(.headline)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(AppColor.ink)
-
                 Spacer()
 
-                Menu {
-                    ForEach(1...12, id: \.self) { month in
-                        Button {
-                            selectedMonth = month
-                        } label: {
-                            Text(verbatim: "\(month) 月")
-                        }
-                    }
+                Button {
+                    isSelectingMonth = true
                 } label: {
-                    Text(verbatim: "\(selectedMonth) 月")
-                        .font(.headline)
+                    HStack(spacing: 6) {
+                        Text(verbatim: "\(selectedYear) 年 \(selectedMonth) 月")
+                            .font(.headline)
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(AppColor.ink)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(AppColor.ink)
+
+                Spacer()
             }
 
             LazyVGrid(columns: dayColumns, spacing: 8) {
@@ -617,6 +709,14 @@ struct MonthTransactionCalendarView: View {
             }
         }
         .surface()
+        .sheet(isPresented: $isSelectingMonth) {
+            MonthPickerSheet(
+                selectedYear: $selectedYear,
+                selectedMonth: $selectedMonth,
+                availableYears: availableYears,
+                availableMonths: availableMonths
+            )
+        }
     }
 
     private static var weekdaySymbols: [String] {
@@ -627,6 +727,77 @@ struct MonthTransactionCalendarView: View {
             symbols = Array(symbols[firstWeekday...]) + Array(symbols[..<firstWeekday])
         }
         return symbols
+    }
+}
+
+struct MonthPickerSheet: View {
+    @Binding var selectedYear: Int
+    @Binding var selectedMonth: Int
+    var availableYears: [Int]
+    var availableMonths: [Int]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            HStack(spacing: 0) {
+                yearPicker
+                monthPicker
+            }
+            .padding()
+            .navigationTitle("选择月份")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.height(320)])
+    }
+
+    @ViewBuilder
+    private var yearPicker: some View {
+        #if os(iOS)
+        Picker("年份", selection: $selectedYear) {
+            ForEach(availableYears, id: \.self) { year in
+                Text(verbatim: "\(year) 年").tag(year)
+            }
+        }
+        .pickerStyle(.wheel)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        #else
+        Picker("年份", selection: $selectedYear) {
+            ForEach(availableYears, id: \.self) { year in
+                Text(verbatim: "\(year) 年").tag(year)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity)
+        #endif
+    }
+
+    @ViewBuilder
+    private var monthPicker: some View {
+        #if os(iOS)
+        Picker("月份", selection: $selectedMonth) {
+            ForEach(availableMonths, id: \.self) { month in
+                Text(verbatim: "\(month) 月").tag(month)
+            }
+        }
+        .pickerStyle(.wheel)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        #else
+        Picker("月份", selection: $selectedMonth) {
+            ForEach(availableMonths, id: \.self) { month in
+                Text(verbatim: "\(month) 月").tag(month)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity)
+        #endif
     }
 }
 
@@ -704,9 +875,10 @@ struct TransactionDateDetailView: View {
                             Image(systemName: "trash")
                         }
                         .tint(.red)
-                    }
+                }
             }
         }
+        .tabBarScrollableContentInset()
         .listStyle(.plain)
         .navigationTitle(Self.dateText(for: date))
         .alert("删除失败", isPresented: Binding(
@@ -734,23 +906,33 @@ struct TransactionDateDetailView: View {
     }
 }
 
-struct EmptyTransactionsView: View {
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "calendar.badge.plus")
-                .font(.largeTitle)
-                .foregroundStyle(AppColor.primary)
+struct RecentTransactionsSection: View {
+    var transactions: [MoneyTransaction]
 
-            Text("这个月还没有账目")
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("最近账目")
                 .font(.headline)
                 .foregroundStyle(AppColor.ink)
 
-            Text("切换年份或月份，可以查看其他时间的明细。")
-                .font(.subheadline)
-                .foregroundStyle(AppColor.muted)
-                .multilineTextAlignment(.center)
+            if transactions.isEmpty {
+                Text("本月还没有账目")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(transactions) { transaction in
+                        TransactionRow(transaction: transaction)
+
+                        if transaction.id != transactions.last?.id {
+                            Divider()
+                                .padding(.leading, 52)
+                        }
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
         .surface()
     }
 }
@@ -823,6 +1005,7 @@ struct AccountsView: View {
                 }
                 .padding()
             }
+            .tabBarScrollableContentInset()
             .background(AppColor.background)
             .toolbar {
                 if store.initializationMode {
@@ -1122,7 +1305,7 @@ struct AssetEditorView: View {
                     TextField("名称", text: $asset.name)
                     LabeledContent("类型", value: asset.kind.title)
                     if asset.kind != .fund {
-                        moneyField(asset.kind.supportsRepayment ? "总欠款" : "余额", text: $balanceText)
+                        moneyField(asset.kind.isDebtAccount ? "总欠款" : "余额", text: $balanceText)
                     }
                 }
 
@@ -1133,7 +1316,7 @@ struct AssetEditorView: View {
                     }
                 }
 
-                if asset.kind.supportsRepayment {
+                if asset.kind.isDebtAccount {
                     Section("24 个月待还") {
                         ForEach(asset.repayments.indices, id: \.self) { index in
                             moneyField(asset.repayments[index].title, text: $repaymentTexts[index])
@@ -1180,7 +1363,7 @@ struct AssetEditorView: View {
 
     private func save() throws {
         if asset.kind != .fund {
-            asset.balance = try moneyValue(balanceText, field: asset.kind.supportsRepayment ? "总欠款" : "余额")
+            asset.balance = try moneyValue(balanceText, field: asset.kind.isDebtAccount ? "总欠款" : "余额")
         }
 
         if asset.kind == .fund {
@@ -1189,7 +1372,7 @@ struct AssetEditorView: View {
             asset.balance = asset.fundCurrentValue
         }
 
-        if asset.kind.supportsRepayment {
+        if asset.kind.isDebtAccount {
             asset.repayments = try asset.repayments.indices.map { index in
                 RepaymentMonth(
                     id: asset.repayments[index].id,
@@ -1238,6 +1421,7 @@ struct AddAssetView: View {
     var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var accountCategory: AssetAccountCategory = .balance
     @State private var kind: AssetKind = .debitCard
     @State private var saveError: String?
 
@@ -1246,13 +1430,33 @@ struct AddAssetView: View {
             Form {
                 TextField("名称", text: $name)
 
-                Picker("类型", selection: $kind) {
-                    ForEach(AssetKind.allCases) { kind in
-                        Label(kind.title, systemImage: kind.symbolName).tag(kind)
+                Section("账户分类") {
+                    Picker("分类", selection: $accountCategory) {
+                        ForEach(AssetAccountCategory.allCases) { category in
+                            Text(category.title).tag(category)
+                        }
+                    }
+
+                    Text(accountCategory.detail)
+                        .font(.caption)
+                        .foregroundStyle(AppColor.muted)
+                }
+
+                Section("账户类型") {
+                    Picker("类型", selection: $kind) {
+                        ForEach(accountCategory.assetKinds) { kind in
+                            Label(kind.title, systemImage: kind.symbolName).tag(kind)
+                        }
                     }
                 }
             }
             .navigationTitle("新增资产")
+            .onChange(of: accountCategory) { _, newValue in
+                if !newValue.assetKinds.contains(kind),
+                   let firstKind = newValue.assetKinds.first {
+                    kind = firstKind
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
@@ -1336,6 +1540,7 @@ struct SettingsView: View {
                         .foregroundStyle(AppColor.muted)
                 }
             }
+            .tabBarScrollableContentInset()
             .fileExporter(
                 isPresented: $isExporting,
                 document: exportDocument,
@@ -1410,6 +1615,7 @@ struct CategoryManagerView: View {
                 }
             }
         }
+        .tabBarScrollableContentInset()
         .navigationTitle("分类管理")
         .toolbar {
             Button {
@@ -1475,7 +1681,33 @@ struct AddCategoryView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var kind: CategoryKind = .expense
+    @State private var symbolName = Self.iconOptions[0]
     @State private var saveError: String?
+
+    private static let iconOptions = [
+        "tag.fill",
+        "fork.knife",
+        "cart.fill",
+        "bag.fill",
+        "cup.and.saucer.fill",
+        "car.fill",
+        "tram.fill",
+        "house.fill",
+        "cross.case.fill",
+        "book.fill",
+        "gamecontroller.fill",
+        "gift.fill",
+        "banknote.fill",
+        "creditcard.fill",
+        "chart.line.uptrend.xyaxis",
+        "percent",
+        "doc.text.fill",
+        "envelope.fill",
+        "shippingbox.fill",
+        "ellipsis.circle.fill"
+    ]
+
+    private let iconColumns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
 
     var body: some View {
         NavigationStack {
@@ -1487,6 +1719,31 @@ struct AddCategoryView: View {
                     Text("收入").tag(CategoryKind.income)
                 }
                 .pickerStyle(.segmented)
+
+                Section("图标") {
+                    LazyVGrid(columns: iconColumns, spacing: 10) {
+                        ForEach(Self.iconOptions, id: \.self) { option in
+                            Button {
+                                symbolName = option
+                            } label: {
+                                Image(systemName: option)
+                                    .font(.title3)
+                                    .foregroundStyle(symbolName == option ? AppColor.primary : AppColor.ink)
+                                    .frame(width: 44, height: 44)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(symbolName == option ? AppColor.primary.opacity(0.14) : AppColor.surface)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(symbolName == option ? AppColor.primary : AppColor.line, lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
             }
             .navigationTitle("新增分类")
             .toolbar {
@@ -1499,7 +1756,7 @@ struct AddCategoryView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         do {
-                            try store.addCategory(name: name, kind: kind)
+                            try store.addCategory(name: name, kind: kind, symbolName: symbolName)
                             dismiss()
                         } catch {
                             saveError = error.localizedDescription

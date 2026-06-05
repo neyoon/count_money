@@ -22,6 +22,10 @@ enum AppColor {
     static let danger = Color(red: 0.84, green: 0.22, blue: 0.22)
 }
 
+enum AppLayout {
+    static let tabBarScrollableContentInset: CGFloat = 75
+}
+
 enum MoneyFormat {
     static func yuan(_ value: Decimal, signed: Bool = false) -> String {
         let number = NSDecimalNumber(decimal: value)
@@ -54,6 +58,12 @@ struct SurfaceModifier: ViewModifier {
 extension View {
     func surface() -> some View {
         modifier(SurfaceModifier())
+    }
+
+    func tabBarScrollableContentInset() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: AppLayout.tabBarScrollableContentInset)
+        }
     }
 
     @ViewBuilder

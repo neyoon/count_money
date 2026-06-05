@@ -23,6 +23,7 @@ enum PreviewData {
             sortOrder: 20,
             isSystemPreset: true
         ),
+        .repayment,
         MoneyCategory(
             id: UUID(),
             presetKey: "expense_daily",
@@ -222,13 +223,6 @@ enum PreviewData {
         expenseCategories + incomeCategories
     }
 
-    static let wallet = MoneyAccount(
-        id: UUID(),
-        name: "默认钱包",
-        symbolName: "creditcard.fill",
-        balance: 0
-    )
-
     static let assets: [AssetItem] = [
         AssetItem(
             id: UUID(),
@@ -331,27 +325,6 @@ enum PreviewData {
         )
     ]
 
-    static let transactions: [MoneyTransaction] = [
-        income("工资", category: "income_salary", amount: 22000, daysAgo: 3),
-        income("项目尾款", category: "income_freelance", amount: 3200, daysAgo: 1),
-        income("订单退款", category: "income_refund", amount: 89, daysAgo: 2),
-        expense("午饭", category: "expense_food", amount: 38, daysAgo: 0),
-        expense("打车", category: "expense_transport", amount: 62, daysAgo: 0),
-        expense("超市", category: "expense_daily", amount: 186, daysAgo: 1),
-        expense("会员订阅", category: "expense_subscription", amount: 68, daysAgo: 2),
-        expense("衣服", category: "expense_shopping", amount: 560, daysAgo: 2),
-        expense("电影", category: "expense_entertainment", amount: 96, daysAgo: 3),
-        expense("体检", category: "expense_health", amount: 780, daysAgo: 4),
-        expense("课程", category: "expense_education", amount: 1299, daysAgo: 5),
-        expense("家人红包", category: "expense_family", amount: 500, daysAgo: 6),
-        expense("晚饭", category: "expense_food", amount: 128, daysAgo: 6),
-        expense("日用品", category: "expense_daily", amount: 119, daysAgo: 8)
-    ]
-
-    static let overview = MonthlyOverview(
-        transactions: transactions
-    )
-
     static func categories(for kind: TransactionKind) -> [MoneyCategory] {
         switch kind {
         case .expense:
@@ -361,54 +334,6 @@ enum PreviewData {
         case .fundProfit:
             []
         }
-    }
-
-    private static func expense(
-        _ title: String,
-        category presetKey: String,
-        amount: Int,
-        daysAgo: Int
-    ) -> MoneyTransaction {
-        transaction(
-            kind: .expense,
-            title: title,
-            category: presetKey,
-            amount: amount,
-            daysAgo: daysAgo
-        )
-    }
-
-    private static func income(
-        _ title: String,
-        category presetKey: String,
-        amount: Int,
-        daysAgo: Int
-    ) -> MoneyTransaction {
-        transaction(
-            kind: .income,
-            title: title,
-            category: presetKey,
-            amount: amount,
-            daysAgo: daysAgo
-        )
-    }
-
-    private static func transaction(
-        kind: TransactionKind,
-        title: String,
-        category presetKey: String,
-        amount: Int,
-        daysAgo: Int
-    ) -> MoneyTransaction {
-        MoneyTransaction(
-            id: UUID(),
-            kind: kind,
-            title: title,
-            category: category(presetKey),
-            account: wallet,
-            amount: .money(amount),
-            occurredAt: Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
-        )
     }
 
     static func category(_ presetKey: String, fallbackKind: TransactionKind = .expense) -> MoneyCategory {

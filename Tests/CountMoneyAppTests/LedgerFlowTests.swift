@@ -143,6 +143,23 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.ledgerAssets.first { $0.id == fund.id }?.fundProfit, 50)
     }
 
+    func testCustomCategoryKeepsChosenIconAndAppearsFirst() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+
+        try store.addCategory(name: "房租", kind: .expense, symbolName: "house.fill")
+
+        let category = try XCTUnwrap(store.expenseCategories.first)
+        XCTAssertEqual(category.name, "房租")
+        XCTAssertEqual(category.symbolName, "house.fill")
+        XCTAssertFalse(category.isSystemPreset)
+    }
+
     func testInstallmentRepaymentPlanCountsAsOverviewDebt() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
@@ -167,6 +184,254 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.assetOverview.debt, 300)
     }
 
+    func testWechatCreditSupportsInstallmentRepaymentPlan() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let wechatCredit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "微信分付" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 80,
+            category: food,
+            account: wechatCredit,
+            title: "微信分付分期",
+            installmentMonths: 2
+        )
+
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "微信分付分期" })
+        XCTAssertEqual(transaction.installmentMonths, 2)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == wechatCredit.id }?.totalRepayment, 160)
+        XCTAssertEqual(store.assetOverview.debt, 160)
+    }
+
+    func testCreditExpenseWithoutInstallmentAddsCurrentMonthRepayment() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 120,
+            category: food,
+            account: credit,
+            title: "晚饭"
+        )
+
+        let asset = try XCTUnwrap(store.ledgerAssets.first { $0.id == credit.id })
+        XCTAssertEqual(asset.currentMonthRepayment, 120)
+        XCTAssertEqual(asset.balance, 120)
+        XCTAssertEqual(store.assetOverview.debt, 120)
+        XCTAssertEqual(store.assetOverview.currentMonthRepayment, 120)
+    }
+
+    func testDeletingTransactionRemovesItFromRecentOverview() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 42,
+            category: food,
+            account: debit,
+            title: "待删除账目"
+        )
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "待删除账目" })
+        XCTAssertTrue(store.overview.recentTransactions.contains { $0.id == transaction.id })
+
+        try store.deleteTransaction(transaction)
+
+        XCTAssertFalse(store.transactions.contains { $0.id == transaction.id })
+        XCTAssertFalse(store.overview.recentTransactions.contains { $0.id == transaction.id })
+    }
+
+    func testDebtAccountsCanSpendButCannotFundRepayment() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+
+        XCTAssertTrue(store.paymentAccounts.contains { $0.name == "微信分付" })
+        XCTAssertTrue(store.paymentAccounts.contains { $0.name == "美团月付" })
+        XCTAssertTrue(store.paymentAccounts.contains { $0.name == "花呗" })
+        XCTAssertTrue(store.paymentAccounts.contains { $0.name == "京东白条" })
+        XCTAssertTrue(store.paymentAccounts.contains { $0.name == "信用卡" })
+
+        XCTAssertFalse(store.repaymentPaymentAccounts.contains { $0.name == "微信分付" })
+        XCTAssertFalse(store.repaymentPaymentAccounts.contains { $0.name == "美团月付" })
+        XCTAssertFalse(store.repaymentPaymentAccounts.contains { $0.name == "花呗" })
+        XCTAssertFalse(store.repaymentPaymentAccounts.contains { $0.name == "京东白条" })
+        XCTAssertFalse(store.repaymentPaymentAccounts.contains { $0.name == "信用卡" })
+    }
+
+    func testDeletingCreditExpenseRestoresCurrentMonthRepayment() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 120,
+            category: food,
+            account: credit,
+            title: "晚饭"
+        )
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "晚饭" })
+
+        try store.deleteTransaction(transaction)
+
+        let asset = try XCTUnwrap(store.ledgerAssets.first { $0.id == credit.id })
+        XCTAssertEqual(asset.currentMonthRepayment, 0)
+        XCTAssertEqual(asset.balance, 0)
+        XCTAssertEqual(store.assetOverview.debt, 0)
+        XCTAssertEqual(store.assetOverview.currentMonthRepayment, 0)
+    }
+
+    func testDeletingInstallmentExpenseRestoresRepaymentPlan() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 100,
+            category: food,
+            account: credit,
+            title: "分期",
+            installmentMonths: 3
+        )
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "分期" })
+
+        try store.deleteTransaction(transaction)
+
+        let asset = try XCTUnwrap(store.ledgerAssets.first { $0.id == credit.id })
+        XCTAssertEqual(asset.totalRepayment, 0)
+        XCTAssertEqual(asset.balance, 0)
+        XCTAssertEqual(store.assetOverview.debt, 0)
+    }
+
+    func testRepaymentReducesDebtAndPendingRepayment() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+        let repayment = try XCTUnwrap(store.expenseCategories.first(where: \.isRepayment))
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 120,
+            category: food,
+            account: credit,
+            title: "晚饭"
+        )
+        let repaymentAccount = try XCTUnwrap(store.repaymentAccounts.first { $0.id == credit.id })
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 50,
+            category: repayment,
+            account: repaymentAccount,
+            title: "还款",
+            paymentAccount: debit
+        )
+
+        let asset = try XCTUnwrap(store.ledgerAssets.first { $0.id == credit.id })
+        XCTAssertEqual(asset.currentMonthRepayment, 70)
+        XCTAssertEqual(asset.balance, 70)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, -50)
+        XCTAssertEqual(store.assetOverview.debt, 70)
+        XCTAssertEqual(store.assetOverview.currentMonthRepayment, 70)
+        XCTAssertEqual(store.overview.expense, 170)
+        XCTAssertEqual(store.overview.income, 0)
+        XCTAssertTrue(store.transactions.contains {
+            $0.kind == .expense
+                && $0.category.isRepayment
+                && $0.amount == 50
+                && $0.account.id == credit.id
+                && $0.paymentAccount?.id == debit.id
+        })
+    }
+
+    func testDeletingRepaymentRestoresDebtAndPaymentAccount() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+        let repayment = try XCTUnwrap(store.expenseCategories.first(where: \.isRepayment))
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 120,
+            category: food,
+            account: credit,
+            title: "晚饭"
+        )
+        let repaymentAccount = try XCTUnwrap(store.repaymentAccounts.first { $0.id == credit.id })
+        try store.addTransaction(
+            kind: .expense,
+            amount: 50,
+            category: repayment,
+            account: repaymentAccount,
+            title: "还款",
+            paymentAccount: debit
+        )
+        let repaymentTransaction = try XCTUnwrap(store.transactions.first { $0.category.isRepayment })
+
+        try store.deleteTransaction(repaymentTransaction)
+
+        let asset = try XCTUnwrap(store.ledgerAssets.first { $0.id == credit.id })
+        XCTAssertEqual(asset.currentMonthRepayment, 120)
+        XCTAssertEqual(asset.balance, 120)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, 0)
+        XCTAssertEqual(store.assetOverview.debt, 120)
+        XCTAssertEqual(store.assetOverview.currentMonthRepayment, 120)
+    }
+
     func testLegacyDefaultAssetNamesAreNormalizedOnStartup() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
@@ -188,6 +453,7 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(store.assets.contains { $0.kind == .wechatChange && $0.name == "零钱" })
         XCTAssertTrue(store.assets.contains { $0.kind == .wechatCredit && $0.name == "微信分付" })
         XCTAssertFalse(store.assets.contains { $0.name == "支付宝花呗" || $0.name == "微信零钱" || $0.name == "微信待还" })
+        XCTAssertTrue(store.expenseCategories.contains(where: \.isRepayment))
     }
 
     private func transaction(

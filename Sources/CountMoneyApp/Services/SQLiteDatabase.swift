@@ -112,6 +112,11 @@ final class SQLiteDatabase {
 
         try addColumnIfNeeded(table: "transactions", column: "account_id", definition: "TEXT")
         try addColumnIfNeeded(table: "transactions", column: "account_symbol_name", definition: "TEXT")
+        try addColumnIfNeeded(table: "transactions", column: "payment_account_id", definition: "TEXT")
+        try addColumnIfNeeded(table: "transactions", column: "payment_account_name", definition: "TEXT")
+        try addColumnIfNeeded(table: "transactions", column: "payment_account_symbol_name", definition: "TEXT")
+        try addColumnIfNeeded(table: "transactions", column: "installment_months", definition: "INTEGER")
+        try addColumnIfNeeded(table: "transactions", column: "repayment_adjustments", definition: "TEXT")
 
         try execute("""
         CREATE TABLE IF NOT EXISTS assets (
@@ -172,7 +177,9 @@ final class SQLiteDatabase {
 
     private func loadTransactions(categories: [MoneyCategory]) throws -> [MoneyTransaction] {
         let sql = """
-        SELECT id, kind, title, category_id, account_id, account_name, account_symbol_name, amount, occurred_at
+        SELECT id, kind, title, category_id, account_id, account_name, account_symbol_name, amount, occurred_at,
+               payment_account_id, payment_account_name, payment_account_symbol_name, installment_months,
+               repayment_adjustments
         FROM transactions
         ORDER BY occurred_at DESC
         """
@@ -194,7 +201,14 @@ final class SQLiteDatabase {
                     symbolName: optionalText(statement, 6) ?? "creditcard.fill",
                     balance: 0
                 ),
+                paymentAccount: optionalAccount(
+                    id: optionalText(statement, 9),
+                    name: optionalText(statement, 10),
+                    symbolName: optionalText(statement, 11)
+                ),
                 amount: try decimal(statement, 7, table: "transactions", column: "amount"),
+                installmentMonths: optionalInt(statement, 12),
+                repaymentAdjustments: try repaymentAdjustments(statement, 13),
                 occurredAt: ISO8601DateFormatter().date(from: text(statement, 8)) ?? Date()
             )
         }
@@ -308,8 +322,10 @@ final class SQLiteDatabase {
 
         let sql = """
         INSERT INTO transactions (
-            id, kind, title, category_id, account_id, account_name, account_symbol_name, amount, occurred_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, kind, title, category_id, account_id, account_name, account_symbol_name,
+            payment_account_id, payment_account_name, payment_account_symbol_name, installment_months,
+            repayment_adjustments, amount, occurred_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         for item in transactions {
@@ -321,8 +337,13 @@ final class SQLiteDatabase {
                 bind(statement, 5, item.account.id.uuidString)
                 bind(statement, 6, item.account.name)
                 bind(statement, 7, item.account.symbolName)
-                bind(statement, 8, decimalText(item.amount))
-                bind(statement, 9, ISO8601DateFormatter().string(from: item.occurredAt))
+                bind(statement, 8, item.paymentAccount?.id.uuidString)
+                bind(statement, 9, item.paymentAccount?.name)
+                bind(statement, 10, item.paymentAccount?.symbolName)
+                bind(statement, 11, item.installmentMonths)
+                bind(statement, 12, try repaymentAdjustmentsText(item.repaymentAdjustments))
+                bind(statement, 13, decimalText(item.amount))
+                bind(statement, 14, ISO8601DateFormatter().string(from: item.occurredAt))
                 try stepDone(statement)
             }
         }
@@ -429,6 +450,14 @@ final class SQLiteDatabase {
         sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
     }
 
+    private func bind(_ statement: OpaquePointer?, _ index: Int32, _ value: Int?) {
+        guard let value else {
+            sqlite3_bind_null(statement, index)
+            return
+        }
+        sqlite3_bind_int(statement, index, Int32(value))
+    }
+
     private func text(_ statement: OpaquePointer?, _ index: Int32) -> String {
         guard let cString = sqlite3_column_text(statement, index) else { return "" }
         return String(cString: cString)
@@ -437,6 +466,27 @@ final class SQLiteDatabase {
     private func optionalText(_ statement: OpaquePointer?, _ index: Int32) -> String? {
         guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
         return text(statement, index)
+    }
+
+    private func optionalInt(_ statement: OpaquePointer?, _ index: Int32) -> Int? {
+        guard sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+        return Int(sqlite3_column_int(statement, index))
+    }
+
+    private func optionalAccount(id: String?, name: String?, symbolName: String?) -> MoneyAccount? {
+        guard let id,
+              let accountID = UUID(uuidString: id),
+              let name
+        else {
+            return nil
+        }
+
+        return MoneyAccount(
+            id: accountID,
+            name: name,
+            symbolName: symbolName ?? "creditcard.fill",
+            balance: 0
+        )
     }
 
     private func decimal(_ statement: OpaquePointer?, _ index: Int32, table: String, column: String) throws -> Decimal {
@@ -458,6 +508,31 @@ final class SQLiteDatabase {
             throw SQLiteFailure.invalidStoredAmount(table: table, column: column, value: raw)
         }
         return value
+    }
+
+    private func repaymentAdjustments(_ statement: OpaquePointer?, _ index: Int32) throws -> [RepaymentAdjustment] {
+        guard let raw = optionalText(statement, index),
+              let data = raw.data(using: .utf8)
+        else {
+            return []
+        }
+
+        do {
+            return try JSONDecoder().decode([RepaymentAdjustment].self, from: data)
+        } catch {
+            throw SQLiteFailure.statementFailed(message: "无法读取本地待还调整记录")
+        }
+    }
+
+    private func repaymentAdjustmentsText(_ adjustments: [RepaymentAdjustment]) throws -> String? {
+        guard !adjustments.isEmpty else { return nil }
+
+        do {
+            let data = try JSONEncoder().encode(adjustments)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            throw SQLiteFailure.statementFailed(message: "无法保存本地待还调整记录")
+        }
     }
 
     private func color(for presetKey: String) -> Color {

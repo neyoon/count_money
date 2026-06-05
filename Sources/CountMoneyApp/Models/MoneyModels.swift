@@ -40,6 +40,17 @@ enum AssetKind: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var accountCategory: AssetAccountCategory {
+        switch self {
+        case .creditCard, .alipayCredit, .wechatCredit, .meituan, .jd:
+            .debt
+        case .fund:
+            .investment
+        case .debitCard, .alipayBalance, .alipayYuEBao, .wechatChange, .wechatChangePass, .cash:
+            .balance
+        }
+    }
+
     var title: String {
         switch self {
         case .debitCard: "借记卡"
@@ -74,7 +85,19 @@ enum AssetKind: String, CaseIterable, Identifiable {
         }
     }
 
-    var supportsRepayment: Bool {
+    var isDebtAccount: Bool {
+        accountCategory == .debt
+    }
+
+    var canSpend: Bool {
+        accountCategory != .investment
+    }
+
+    var canFundRepayment: Bool {
+        accountCategory == .balance
+    }
+
+    var supportsInstallment: Bool {
         switch self {
         case .creditCard, .alipayCredit, .wechatCredit, .meituan, .jd:
             true
@@ -82,23 +105,33 @@ enum AssetKind: String, CaseIterable, Identifiable {
             false
         }
     }
+}
 
-    var canPayTransaction: Bool {
+enum AssetAccountCategory: String, CaseIterable, Identifiable {
+    case balance
+    case debt
+    case investment
+
+    var id: String { rawValue }
+
+    var title: String {
         switch self {
-        case .wechatCredit, .fund:
-            false
-        case .debitCard, .creditCard, .alipayBalance, .alipayYuEBao, .alipayCredit, .wechatChange, .wechatChangePass, .meituan, .jd, .cash:
-            true
+        case .balance: "余额账户"
+        case .debt: "待还账户"
+        case .investment: "投资账户"
         }
     }
 
-    var supportsInstallment: Bool {
+    var detail: String {
         switch self {
-        case .creditCard, .alipayCredit, .meituan, .jd:
-            true
-        case .debitCard, .alipayBalance, .alipayYuEBao, .wechatChange, .wechatChangePass, .wechatCredit, .fund, .cash:
-            false
+        case .balance: "可消费，也可作为还款支付账户"
+        case .debt: "可消费，消费后形成待还"
+        case .investment: "只用于基金资产和盈亏"
         }
+    }
+
+    var assetKinds: [AssetKind] {
+        AssetKind.allCases.filter { $0.accountCategory == self }
     }
 }
 
@@ -184,7 +217,7 @@ struct AssetItem: Identifiable, Hashable {
     }
 
     var isDebtLike: Bool {
-        kind.supportsRepayment
+        kind.isDebtAccount
     }
 }
 
@@ -206,14 +239,39 @@ struct MoneyCategory: Identifiable, Hashable {
     var isSystemPreset: Bool
 }
 
+extension MoneyCategory {
+    static let repayment = MoneyCategory(
+        id: UUID(uuidString: "7E8C5A30-017B-438A-BF87-A9814C2B1320")!,
+        presetKey: "expense_repayment",
+        name: "还款",
+        kind: .expense,
+        symbolName: "arrow.uturn.left.circle.fill",
+        color: AppColor.primary,
+        sortOrder: 25,
+        isSystemPreset: true
+    )
+
+    var isRepayment: Bool {
+        presetKey == Self.repayment.presetKey
+    }
+}
+
 struct MoneyTransaction: Identifiable, Hashable {
     let id: UUID
     var kind: TransactionKind
     var title: String
     var category: MoneyCategory
     var account: MoneyAccount
+    var paymentAccount: MoneyAccount? = nil
     var amount: Decimal
+    var installmentMonths: Int? = nil
+    var repaymentAdjustments: [RepaymentAdjustment] = []
     var occurredAt: Date
+}
+
+struct RepaymentAdjustment: Hashable, Codable {
+    var monthOffset: Int
+    var amount: Decimal
 }
 
 struct QuickEntryDraft: Identifiable, Hashable {
@@ -243,6 +301,7 @@ struct AssetOverview: Hashable {
     var holdings: Decimal
     var fundHoldings: Decimal
     var debt: Decimal
+    var currentMonthRepayment: Decimal
 
     var net: Decimal {
         holdings + fundHoldings - debt
@@ -265,10 +324,25 @@ enum LedgerCalculator {
                 continue
             }
 
-            if assetKind.supportsRepayment {
+            if assetKind.isDebtAccount {
                 switch transaction.kind {
                 case .expense:
-                    balances[transaction.account.id, default: 0] += transaction.amount
+                    if transaction.category.isRepayment {
+                        balances[transaction.account.id, default: 0] -= transaction.amount
+                        if let paymentAccount = transaction.paymentAccount,
+                           paymentAccount.id != transaction.account.id,
+                           balances[paymentAccount.id] != nil,
+                           let paymentAssetKind = assetKinds[paymentAccount.id] {
+                            applyExpense(
+                                amount: transaction.amount,
+                                accountID: paymentAccount.id,
+                                assetKind: paymentAssetKind,
+                                balances: &balances
+                            )
+                        }
+                    } else {
+                        balances[transaction.account.id, default: 0] += transaction.amount
+                    }
                 case .income:
                     balances[transaction.account.id, default: 0] -= transaction.amount
                 case .fundProfit:
@@ -287,6 +361,19 @@ enum LedgerCalculator {
         }
 
         return balances
+    }
+
+    private static func applyExpense(
+        amount: Decimal,
+        accountID: UUID,
+        assetKind: AssetKind,
+        balances: inout [UUID: Decimal]
+    ) {
+        if assetKind.isDebtAccount {
+            balances[accountID, default: 0] += amount
+        } else {
+            balances[accountID, default: 0] -= amount
+        }
     }
 
     static func assetsWithLedgerBalances(
@@ -421,7 +508,12 @@ extension MoneyTransaction {
             title: title,
             categoryPresetKey: category.presetKey,
             accountName: account.name,
+            paymentAccountID: paymentAccount?.id.uuidString,
+            paymentAccountName: paymentAccount?.name,
+            paymentAccountSymbolName: paymentAccount?.symbolName,
             amount: NSDecimalNumber(decimal: amount).stringValue,
+            installmentMonths: installmentMonths,
+            repaymentAdjustments: repaymentAdjustments,
             occurredAt: ISO8601DateFormatter().string(from: occurredAt)
         )
     }
@@ -436,6 +528,12 @@ struct TransactionExportRecord: Codable, Identifiable {
     var accountName: String
     var accountKind: String? = nil
     var accountSymbolName: String? = nil
+    var paymentAccountID: String? = nil
+    var paymentAccountName: String? = nil
+    var paymentAccountKind: String? = nil
+    var paymentAccountSymbolName: String? = nil
     var amount: String
+    var installmentMonths: Int? = nil
+    var repaymentAdjustments: [RepaymentAdjustment]? = nil
     var occurredAt: String
 }
