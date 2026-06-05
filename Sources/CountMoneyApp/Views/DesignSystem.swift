@@ -24,7 +24,7 @@ enum AppColor {
 
 enum AppLayout {
     static let tabBarScrollableContentInset: CGFloat = 75
-    static let historyPullDistance: CGFloat = 240
+    static let historyPullDistance: CGFloat = 480
 }
 
 enum AppDateRange {
@@ -179,12 +179,6 @@ struct HistoryActionButtons: View {
             .tint(AppColor.primary)
         }
         .padding(12)
-        .background(AppColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(AppColor.line, lineWidth: 1)
-        )
     }
 }
 

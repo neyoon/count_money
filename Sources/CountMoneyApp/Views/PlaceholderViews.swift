@@ -2140,7 +2140,7 @@ struct SettingsView: View {
                         get: { store.historyMode },
                         set: { store.historyMode = $0 }
                     )) {
-                        Label("历史功能", systemImage: "clock.arrow.circlepath")
+                        Label("历史回顾", systemImage: "clock.arrow.circlepath")
                     }
                 }
 
