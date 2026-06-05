@@ -287,6 +287,69 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(overview.recentTransactions.last?.title, "账目 9")
     }
 
+    func testHistorySnapshotUsesTransactionsAndFundRecordsThroughSelectedDate() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let calendar = Calendar(identifier: .gregorian)
+        let dayOne = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 1, hour: 10)))
+        let dayThree = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 3, hour: 10)))
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let salary = try XCTUnwrap(store.incomeCategories.first { $0.presetKey == "income_salary" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+        let fund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+
+        try store.addTransaction(kind: .income, amount: 100, category: salary, account: debit, title: "工资", occurredAt: dayOne)
+        try store.addTransaction(kind: .expense, amount: 30, category: food, account: debit, title: "午饭", occurredAt: dayThree)
+        try store.addTransaction(kind: .expense, amount: 50, category: food, account: credit, title: "信用卡消费", occurredAt: dayThree)
+        try store.addFundActivity(assetID: fund.id, kind: .investment, amount: 100, note: "", occurredAt: dayOne)
+        try store.addFundActivity(assetID: fund.id, kind: .valuation, amount: 20, note: "", occurredAt: dayThree)
+
+        let snapshot = store.historySnapshot(on: dayOne)
+        let debitSnapshot = try XCTUnwrap(snapshot.assets.first { $0.id == debit.id })
+        let creditSnapshot = try XCTUnwrap(snapshot.assets.first { $0.id == credit.id })
+        let fundSnapshot = try XCTUnwrap(snapshot.assets.first { $0.id == fund.id })
+
+        XCTAssertEqual(snapshot.overview.income, 100)
+        XCTAssertEqual(snapshot.overview.expense, 0)
+        XCTAssertEqual(debitSnapshot.balance, 100)
+        XCTAssertEqual(creditSnapshot.totalDebt, 0)
+        XCTAssertEqual(fundSnapshot.fundCost, 100)
+        XCTAssertEqual(fundSnapshot.fundCurrentValue, 100)
+        XCTAssertEqual(snapshot.assetOverview.net, 200)
+    }
+
+    func testHistoryComparisonSummarizesCurrentMinusHistoricalNetChange() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let calendar = Calendar(identifier: .gregorian)
+        let dayOne = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 1, hour: 10)))
+        let dayThree = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 3, hour: 10)))
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let salary = try XCTUnwrap(store.incomeCategories.first { $0.presetKey == "income_salary" })
+        let fund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+
+        try store.addTransaction(kind: .income, amount: 100, category: salary, account: debit, title: "工资", occurredAt: dayOne)
+        try store.addFundActivity(assetID: fund.id, kind: .investment, amount: 100, note: "", occurredAt: dayOne)
+        try store.addFundActivity(assetID: fund.id, kind: .valuation, amount: 20, note: "", occurredAt: dayThree)
+
+        let comparison = store.historyComparison(from: dayOne)
+
+        XCTAssertEqual(comparison.netChange, 20)
+        XCTAssertEqual(comparison.fundChange, 20)
+        XCTAssertTrue(comparison.assetChanges.contains { $0.id == fund.id && $0.change == 20 })
+    }
+
     func testAddingTransactionKeepsProvidedDate() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")

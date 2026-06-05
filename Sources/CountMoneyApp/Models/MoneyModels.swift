@@ -310,6 +310,74 @@ struct AssetOverview: Hashable {
     var total: Decimal {
         holdings + fundHoldings + debt
     }
+
+    static func make(from assets: [AssetItem]) -> AssetOverview {
+        let usableAssets = assets.filter { $0.kind != .fund }
+        let holdings = usableAssets
+            .filter { !$0.isDebtLike }
+            .map(\.balance)
+            .reduce(0, +)
+        let fundHoldings = assets
+            .filter { $0.kind == .fund }
+            .map(\.fundCurrentValue)
+            .reduce(0, +)
+        let debt = usableAssets
+            .filter(\.isDebtLike)
+            .map(\.totalDebt)
+            .reduce(0, +)
+        let currentMonthRepayment = usableAssets
+            .filter(\.isDebtLike)
+            .map(\.currentMonthRepayment)
+            .reduce(0, +)
+
+        return AssetOverview(
+            holdings: holdings,
+            fundHoldings: fundHoldings,
+            debt: debt,
+            currentMonthRepayment: currentMonthRepayment
+        )
+    }
+}
+
+struct HistorySnapshot: Hashable {
+    var date: Date
+    var overview: MonthlyOverview
+    var assetOverview: AssetOverview
+    var assets: [AssetItem]
+}
+
+struct AssetHistoryChange: Identifiable, Hashable {
+    var id: UUID
+    var name: String
+    var symbolName: String
+    var before: Decimal
+    var after: Decimal
+
+    var change: Decimal {
+        after - before
+    }
+}
+
+struct HistoryComparison: Hashable {
+    var historical: HistorySnapshot
+    var current: HistorySnapshot
+    var assetChanges: [AssetHistoryChange]
+
+    var netChange: Decimal {
+        current.assetOverview.net - historical.assetOverview.net
+    }
+
+    var holdingsChange: Decimal {
+        current.assetOverview.holdings - historical.assetOverview.holdings
+    }
+
+    var fundChange: Decimal {
+        current.assetOverview.fundHoldings - historical.assetOverview.fundHoldings
+    }
+
+    var debtChange: Decimal {
+        current.assetOverview.debt - historical.assetOverview.debt
+    }
 }
 
 enum LedgerCalculator {
@@ -392,7 +460,7 @@ enum LedgerCalculator {
     }
 }
 
-struct MonthlyOverview {
+struct MonthlyOverview: Hashable {
     var income: Decimal
     var expense: Decimal
     var dailyCashflows: [DailyCashflow]
@@ -408,8 +476,10 @@ struct MonthlyOverview {
         calendar: Calendar = .current,
         now: Date = Date()
     ) {
+        let cutoff = calendar.endOfDay(for: now)
         let monthTransactions = transactions.filter {
             calendar.isDate($0.occurredAt, equalTo: now, toGranularity: .month)
+                && $0.occurredAt <= cutoff
         }
         let expenseTransactions = monthTransactions.filter { $0.kind == .expense }
         let incomeTransactions = monthTransactions.filter { $0.kind == .income }
@@ -472,6 +542,13 @@ struct MonthlyOverview {
                 }
                 return $0.amount > $1.amount
             }
+    }
+}
+
+extension Calendar {
+    func endOfDay(for date: Date) -> Date {
+        let start = startOfDay(for: date)
+        return self.date(byAdding: DateComponents(day: 1, second: -1), to: start) ?? date
     }
 }
 

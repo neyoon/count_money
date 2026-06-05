@@ -3,13 +3,26 @@ import SwiftUI
 
 struct DashboardView: View {
     var store: AppStore
+    var isActive = true
+
+    @State private var historyDate: Date?
+    @State private var draftHistoryDate = Date()
+    @State private var historySelectionPurpose: HistorySelectionPurpose = .view
+    @State private var isShowingHistoryActions = false
+    @State private var isSelectingHistoryDate = false
+    @State private var comparisonDate: Date?
+    @State private var isShowingComparison = false
 
     private var overview: MonthlyOverview {
-        store.overview
+        activeHistorySnapshot?.overview ?? store.overview
     }
 
     private var assetOverview: AssetOverview {
-        store.assetOverview
+        activeHistorySnapshot?.assetOverview ?? store.assetOverview
+    }
+
+    private var activeHistorySnapshot: HistorySnapshot? {
+        historyDate.map { store.historySnapshot(on: $0) }
     }
 
     private var columns: [GridItem] {
@@ -23,6 +36,20 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let snapshot = activeHistorySnapshot {
+                        HistoryDateBanner(date: snapshot.date) {
+                            historyDate = nil
+                        }
+                    }
+
+                    if isShowingHistoryActions {
+                        HistoryActionButtons(
+                            onSelectDate: { beginHistoryDateSelection(.view) },
+                            onCompare: { beginHistoryDateSelection(.compare) }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
                     hero
                     metrics
                     weeklyChart
@@ -31,7 +58,45 @@ struct DashboardView: View {
                 .padding()
             }
             .tabBarScrollableContentInset()
+            .historyPull(enabled: store.historyMode) {
+                withAnimation(.snappy) {
+                    isShowingHistoryActions = true
+                }
+            }
             .background(AppColor.background)
+            .sheet(isPresented: $isSelectingHistoryDate) {
+                HistoryDatePickerSheet(title: historySelectionPurpose.title, date: $draftHistoryDate) {
+                    applySelectedHistoryDate()
+                }
+            }
+            .sheet(isPresented: $isShowingComparison) {
+                HistoryComparisonSheet(comparison: store.historyComparison(from: comparisonDate ?? historyDate ?? Date()))
+            }
+            .onChange(of: isActive) { _, isActive in
+                if !isActive {
+                    historyDate = nil
+                    isShowingHistoryActions = false
+                    isSelectingHistoryDate = false
+                    isShowingComparison = false
+                }
+            }
+        }
+    }
+
+    private func beginHistoryDateSelection(_ purpose: HistorySelectionPurpose) {
+        historySelectionPurpose = purpose
+        draftHistoryDate = historyDate ?? Date()
+        isShowingHistoryActions = false
+        isSelectingHistoryDate = true
+    }
+
+    private func applySelectedHistoryDate() {
+        switch historySelectionPurpose {
+        case .view:
+            historyDate = draftHistoryDate
+        case .compare:
+            comparisonDate = draftHistoryDate
+            isShowingComparison = true
         }
     }
 
@@ -183,7 +248,7 @@ struct AssetBalanceRow: View {
 
     private var barColor: Color {
         if asset.kind == .fund {
-            return AppColor.muted
+            return AppColor.success
         }
         if asset.isDebtLike || value < 0 {
             return AppColor.danger
@@ -223,30 +288,43 @@ struct AssetBalanceRow: View {
                     .monospacedDigit()
             }
 
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(AppColor.line.opacity(0.24))
-
-                    Capsule()
-                        .fill(barColor)
-                        .frame(width: value == 0 ? 0 : max(proxy.size.width * barRatio, 4))
-                }
-            }
-            .frame(height: 7)
-            .padding(.leading, 42)
-
             if asset.kind == .fund {
+                VStack(spacing: 6) {
+                    AssetBalanceBar(
+                        title: "实时金额",
+                        value: asset.fundCurrentValue,
+                        scaleBase: scaleBase,
+                        color: AppColor.success
+                    )
+                    AssetBalanceBar(
+                        title: "投入金额",
+                        value: asset.fundCost ?? 0,
+                        scaleBase: scaleBase,
+                        color: AppColor.muted
+                    )
+                }
+                .padding(.leading, 42)
+
                 HStack(spacing: 12) {
-                    Text("持有成本 \(MoneyFormat.yuan(asset.fundCost ?? 0))")
-                        .foregroundStyle(AppColor.muted)
-
-                    Spacer()
-
                     Text("总盈亏 \(MoneyFormat.yuan(asset.fundProfit, signed: asset.fundProfit > 0))")
                         .foregroundStyle(fundProfitColor)
+
+                    Spacer()
                 }
                 .font(.caption)
+                .padding(.leading, 42)
+            } else {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(AppColor.line.opacity(0.24))
+
+                        Capsule()
+                            .fill(barColor)
+                            .frame(width: value == 0 ? 0 : max(proxy.size.width * barRatio, 4))
+                    }
+                }
+                .frame(height: 7)
                 .padding(.leading, 42)
             }
         }
@@ -261,6 +339,45 @@ struct AssetBalanceRow: View {
             return AppColor.success
         }
         return AppColor.muted
+    }
+}
+
+struct AssetBalanceBar: View {
+    var title: String
+    var value: Decimal
+    var scaleBase: Double
+    var color: Color
+
+    private var ratio: Double {
+        min(abs(value.doubleValue) / max(scaleBase, 1), 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title)
+                    .foregroundStyle(AppColor.muted)
+
+                Spacer()
+
+                Text(MoneyFormat.yuan(value))
+                    .foregroundStyle(color)
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(AppColor.line.opacity(0.24))
+
+                    Capsule()
+                        .fill(color)
+                        .frame(width: value == 0 ? 0 : max(proxy.size.width * ratio, 4))
+                }
+            }
+            .frame(height: 7)
+        }
     }
 }
 

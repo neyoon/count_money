@@ -1488,13 +1488,29 @@ private struct RecentTransactionDateHeader: View {
 
 struct AccountsView: View {
     var store: AppStore
+    var isActive = true
     @State private var isAddingAsset = false
     @State private var editingAsset: AssetItem?
     @State private var assetPendingDeletion: AssetItem?
     @State private var message: String?
+    @State private var historyDate: Date?
+    @State private var draftHistoryDate = Date()
+    @State private var historySelectionPurpose: HistorySelectionPurpose = .view
+    @State private var isShowingHistoryActions = false
+    @State private var isSelectingHistoryDate = false
+    @State private var comparisonDate: Date?
+    @State private var isShowingComparison = false
+
+    private var activeHistorySnapshot: HistorySnapshot? {
+        historyDate.map { store.historySnapshot(on: $0) }
+    }
+
+    private var displayedAssets: [AssetItem] {
+        activeHistorySnapshot?.assets ?? store.ledgerAssets
+    }
 
     private var regularAssets: [AssetItem] {
-        store.ledgerAssets.filter { !$0.isDebtLike }.sorted {
+        displayedAssets.filter { !$0.isDebtLike }.sorted {
             if $0.kind == .fund && $1.kind != .fund {
                 return true
             }
@@ -1506,12 +1522,13 @@ struct AccountsView: View {
     }
 
     private var debtAssets: [AssetItem] {
-        store.ledgerAssets.filter(\.isDebtLike)
+        displayedAssets.filter(\.isDebtLike)
     }
 
     private var liveBalanceScaleBase: Double {
         let maxValue = regularAssets
-            .map { abs(liveBalanceValue(for: $0).doubleValue) }
+            .flatMap(liveBalanceScaleValues(for:))
+            .map { abs($0.doubleValue) }
             .max() ?? 0
         return max(maxValue, 1)
     }
@@ -1520,6 +1537,20 @@ struct AccountsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if let snapshot = activeHistorySnapshot {
+                        HistoryDateBanner(date: snapshot.date) {
+                            historyDate = nil
+                        }
+                    }
+
+                    if isShowingHistoryActions {
+                        HistoryActionButtons(
+                            onSelectDate: { beginHistoryDateSelection(.view) },
+                            onCompare: { beginHistoryDateSelection(.compare) }
+                        )
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
                     AssetSection(title: "实时余额") {
                         ForEach(regularAssets) { asset in
                             AssetBalanceRow(asset: asset, scaleBase: liveBalanceScaleBase)
@@ -1531,7 +1562,7 @@ struct AccountsView: View {
                             ForEach(debtAssets) { asset in
                                 AssetCard(
                                     asset: asset,
-                                    canManage: store.initializationMode,
+                                    canManage: store.initializationMode && historyDate == nil,
                                     onEdit: { editingAsset = store.assets.first { $0.id == asset.id } ?? asset },
                                     onDelete: { assetPendingDeletion = asset }
                                 )
@@ -1539,7 +1570,7 @@ struct AccountsView: View {
                         }
                     }
 
-                    if store.initializationMode {
+                    if store.initializationMode && historyDate == nil {
                         AssetSection(title: "初始化数据") {
                             ForEach(store.ledgerAssets) { asset in
                                 AssetCard(
@@ -1555,9 +1586,14 @@ struct AccountsView: View {
                 .padding()
             }
             .tabBarScrollableContentInset()
+            .historyPull(enabled: store.historyMode) {
+                withAnimation(.snappy) {
+                    isShowingHistoryActions = true
+                }
+            }
             .background(AppColor.background)
             .toolbar {
-                if store.initializationMode {
+                if store.initializationMode && historyDate == nil {
                     Button {
                         isAddingAsset = true
                     } label: {
@@ -1570,6 +1606,14 @@ struct AccountsView: View {
             }
             .sheet(item: $editingAsset) { asset in
                 AssetEditorView(store: store, asset: asset)
+            }
+            .sheet(isPresented: $isSelectingHistoryDate) {
+                HistoryDatePickerSheet(title: historySelectionPurpose.title, date: $draftHistoryDate) {
+                    applySelectedHistoryDate()
+                }
+            }
+            .sheet(isPresented: $isShowingComparison) {
+                HistoryComparisonSheet(comparison: store.historyComparison(from: comparisonDate ?? historyDate ?? Date()))
             }
             .confirmationDialog(
                 "删除资产",
@@ -1594,6 +1638,31 @@ struct AccountsView: View {
             } message: {
                 Text(message ?? "")
             }
+            .onChange(of: isActive) { _, isActive in
+                if !isActive {
+                    historyDate = nil
+                    isShowingHistoryActions = false
+                    isSelectingHistoryDate = false
+                    isShowingComparison = false
+                }
+            }
+        }
+    }
+
+    private func beginHistoryDateSelection(_ purpose: HistorySelectionPurpose) {
+        historySelectionPurpose = purpose
+        draftHistoryDate = historyDate ?? Date()
+        isShowingHistoryActions = false
+        isSelectingHistoryDate = true
+    }
+
+    private func applySelectedHistoryDate() {
+        switch historySelectionPurpose {
+        case .view:
+            historyDate = draftHistoryDate
+        case .compare:
+            comparisonDate = draftHistoryDate
+            isShowingComparison = true
         }
     }
 
@@ -1610,6 +1679,14 @@ struct AccountsView: View {
             return asset.fundCurrentValue
         }
         return asset.balance
+    }
+
+    private func liveBalanceScaleValues(for asset: AssetItem) -> [Decimal] {
+        if asset.kind == .fund {
+            return [asset.fundCurrentValue, asset.fundCost ?? 0]
+        }
+
+        return [asset.balance]
     }
 }
 
@@ -2060,6 +2137,13 @@ struct SettingsView: View {
                 }
 
                 Section("数据") {
+                    Toggle(isOn: Binding(
+                        get: { store.historyMode },
+                        set: { store.historyMode = $0 }
+                    )) {
+                        Label("历史功能", systemImage: "clock.arrow.circlepath")
+                    }
+
                     Toggle(isOn: Binding(
                         get: { store.initializationMode },
                         set: { store.initializationMode = $0 }

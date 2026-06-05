@@ -17,6 +17,12 @@ final class AppStore {
         }
     }
 
+    var historyMode: Bool {
+        didSet {
+            UserDefaults.standard.set(historyMode, forKey: "historyMode")
+        }
+    }
+
     var transactions: [MoneyTransaction]
     var expenseCategories: [MoneyCategory]
     var incomeCategories: [MoneyCategory]
@@ -33,30 +39,7 @@ final class AppStore {
     }
 
     var assetOverview: AssetOverview {
-        let usableAssets = ledgerAssets.filter { $0.kind != .fund }
-        let holdings = usableAssets
-            .filter { !$0.isDebtLike }
-            .map(\.balance)
-            .reduce(0, +)
-        let fundHoldings = ledgerAssets
-            .filter { $0.kind == .fund }
-            .map(\.fundCurrentValue)
-            .reduce(0, +)
-        let debt = usableAssets
-            .filter(\.isDebtLike)
-            .map(\.totalDebt)
-            .reduce(0, +)
-        let currentMonthRepayment = usableAssets
-            .filter(\.isDebtLike)
-            .map(\.currentMonthRepayment)
-            .reduce(0, +)
-
-        return AssetOverview(
-            holdings: holdings,
-            fundHoldings: fundHoldings,
-            debt: debt,
-            currentMonthRepayment: currentMonthRepayment
-        )
+        AssetOverview.make(from: ledgerAssets)
     }
 
     var paymentAccounts: [MoneyAccount] {
@@ -103,6 +86,7 @@ final class AppStore {
             .flatMap(AppAppearance.init(rawValue:))
         appearance = savedAppearance ?? .system
         initializationMode = UserDefaults.standard.bool(forKey: "initializationMode")
+        historyMode = UserDefaults.standard.bool(forKey: "historyMode")
 
         do {
             let database: SQLiteDatabase
@@ -391,6 +375,57 @@ final class AppStore {
         ledgerAssets.first { $0.id == account.id }
     }
 
+    func historySnapshot(on date: Date) -> HistorySnapshot {
+        let calendar = Calendar.current
+        let cutoff = calendar.endOfDay(for: date)
+        let snapshotTransactions = transactions.filter { $0.occurredAt <= cutoff }
+        let snapshotAssets = assetsForHistorySnapshot(cutoff: cutoff, transactions: snapshotTransactions)
+
+        return HistorySnapshot(
+            date: cutoff,
+            overview: MonthlyOverview(transactions: snapshotTransactions, calendar: calendar, now: cutoff),
+            assetOverview: AssetOverview.make(from: snapshotAssets),
+            assets: snapshotAssets
+        )
+    }
+
+    func currentHistorySnapshot() -> HistorySnapshot {
+        HistorySnapshot(
+            date: Date(),
+            overview: overview,
+            assetOverview: assetOverview,
+            assets: ledgerAssets
+        )
+    }
+
+    func historyComparison(from date: Date) -> HistoryComparison {
+        let historical = historySnapshot(on: date)
+        let current = currentHistorySnapshot()
+        let historicalAssets = Dictionary(uniqueKeysWithValues: historical.assets.map { ($0.id, $0) })
+
+        let assetChanges = current.assets.compactMap { asset -> AssetHistoryChange? in
+            let beforeAsset = historicalAssets[asset.id]
+            let before = netContribution(of: beforeAsset)
+            let after = netContribution(of: asset)
+            guard before != after else { return nil }
+
+            return AssetHistoryChange(
+                id: asset.id,
+                name: asset.name,
+                symbolName: asset.kind.symbolName,
+                before: before,
+                after: after
+            )
+        }
+        .sorted { abs($0.change.doubleValue) > abs($1.change.doubleValue) }
+
+        return HistoryComparison(
+            historical: historical,
+            current: current,
+            assetChanges: Array(assetChanges.prefix(3))
+        )
+    }
+
     func exportData() throws -> Data {
         let records = transactions.map(makeExportRecord)
         let encoder = JSONEncoder()
@@ -584,6 +619,53 @@ final class AppStore {
     private func persistLedger(transactions: [MoneyTransaction], assets: [AssetItem]) throws {
         guard let database else { throw AppStoreFailure.databaseUnavailable }
         try database.saveLedger(transactions: transactions, assets: assets)
+    }
+
+    private func assetsForHistorySnapshot(cutoff: Date, transactions snapshotTransactions: [MoneyTransaction]) -> [AssetItem] {
+        var snapshotAssets = assets
+
+        for index in snapshotAssets.indices {
+            if snapshotAssets[index].kind == .fund {
+                reverseFutureFundActivities(in: &snapshotAssets[index], cutoff: cutoff)
+            }
+        }
+
+        for transaction in transactions where transaction.occurredAt > cutoff {
+            _ = reverseRepaymentEffects(for: transaction, in: &snapshotAssets)
+        }
+
+        return LedgerCalculator.assetsWithLedgerBalances(
+            assets: snapshotAssets,
+            transactions: snapshotTransactions
+        )
+    }
+
+    private func reverseFutureFundActivities(in asset: inout AssetItem, cutoff: Date) {
+        let futureActivities = asset.fundActivities.filter { $0.occurredAt > cutoff }
+        for activity in futureActivities {
+            switch activity.kind {
+            case .investment:
+                asset.fundCost = (asset.fundCost ?? 0) - activity.amount
+            case .valuation:
+                asset.fundMarketValue = (asset.fundMarketValue ?? 0) - activity.amount
+            }
+        }
+
+        asset.fundActivities = asset.fundActivities
+            .filter { $0.occurredAt <= cutoff }
+            .sorted { $0.occurredAt > $1.occurredAt }
+        asset.balance = asset.fundCurrentValue
+    }
+
+    private func netContribution(of asset: AssetItem?) -> Decimal {
+        guard let asset else { return 0 }
+        if asset.kind == .fund {
+            return asset.fundCurrentValue
+        }
+        if asset.isDebtLike {
+            return -asset.totalDebt
+        }
+        return asset.balance
     }
 
     private func makeTransaction(
