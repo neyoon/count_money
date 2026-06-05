@@ -219,58 +219,76 @@ final class AppStore {
         account: MoneyAccount,
         title: String,
         paymentAccount: MoneyAccount? = nil,
-        installmentMonths: Int? = nil
+        installmentMonths: Int? = nil,
+        occurredAt: Date = Date()
     ) throws {
         guard kind != .fundProfit else { return }
 
-        let usesInstallmentPlan = kind == .expense
-            && !category.isRepayment
-            && (installmentMonths ?? 0) > 0
-            && (asset(for: account)?.kind.supportsInstallment ?? false)
-        let addsCurrentMonthRepayment = kind == .expense
-            && !category.isRepayment
-            && !usesInstallmentPlan
-            && (asset(for: account)?.kind.isDebtAccount ?? false)
-        let appliesRepayment = kind == .expense
-            && category.isRepayment
-            && (asset(for: account)?.kind.isDebtAccount ?? false)
-
         var nextTransactions = transactions
         var nextAssets = assets
-        var repaymentAdjustments: [RepaymentAdjustment] = []
-
-        if usesInstallmentPlan, let installmentMonths {
-            repaymentAdjustments = addRepaymentPlan(to: &nextAssets, accountID: account.id, amount: amount, months: installmentMonths)
-        }
-        if addsCurrentMonthRepayment {
-            repaymentAdjustments = addCurrentMonthRepayment(to: &nextAssets, accountID: account.id, amount: amount)
-        }
-        if appliesRepayment {
-            repaymentAdjustments = applyRepayment(to: &nextAssets, accountID: account.id, amount: amount)
-        }
-
-        nextTransactions.insert(
-            MoneyTransaction(
-                id: UUID(),
-                kind: kind,
-                title: title,
-                category: category,
-                account: account,
-                paymentAccount: category.isRepayment ? paymentAccount : nil,
-                amount: amount,
-                installmentMonths: usesInstallmentPlan ? installmentMonths : nil,
-                repaymentAdjustments: repaymentAdjustments,
-                occurredAt: Date()
-            ),
-            at: 0
+        let transaction = makeTransaction(
+            id: UUID(),
+            kind: kind,
+            amount: amount,
+            category: category,
+            account: account,
+            title: title,
+            paymentAccount: paymentAccount,
+            installmentMonths: installmentMonths,
+            occurredAt: occurredAt,
+            assets: &nextAssets
         )
 
-        if usesInstallmentPlan || addsCurrentMonthRepayment || appliesRepayment {
+        nextTransactions.append(transaction)
+        nextTransactions.sort { $0.occurredAt > $1.occurredAt }
+
+        if transaction.repaymentAdjustments.isEmpty {
+            try persistTransactions(nextTransactions)
+        } else {
             try persistLedger(transactions: nextTransactions, assets: nextAssets)
             assets = nextAssets
-        } else {
-            try persistTransactions(nextTransactions)
         }
+        transactions = nextTransactions
+        quickEntryDraft = nil
+    }
+
+    func updateTransaction(
+        _ original: MoneyTransaction,
+        kind: TransactionKind,
+        amount: Decimal,
+        category: MoneyCategory,
+        account: MoneyAccount,
+        title: String,
+        paymentAccount: MoneyAccount? = nil,
+        installmentMonths: Int? = nil,
+        occurredAt: Date
+    ) throws {
+        guard kind != .fundProfit else { return }
+
+        var nextTransactions = transactions
+        guard nextTransactions.contains(where: { $0.id == original.id }) else { return }
+
+        var nextAssets = assets
+        nextTransactions.removeAll { $0.id == original.id }
+        _ = reverseRepaymentEffects(for: original, in: &nextAssets)
+
+        let updatedTransaction = makeTransaction(
+            id: original.id,
+            kind: kind,
+            amount: amount,
+            category: category,
+            account: account,
+            title: title,
+            paymentAccount: paymentAccount,
+            installmentMonths: installmentMonths,
+            occurredAt: occurredAt,
+            assets: &nextAssets
+        )
+
+        nextTransactions.append(updatedTransaction)
+        nextTransactions.sort { $0.occurredAt > $1.occurredAt }
+        try persistLedger(transactions: nextTransactions, assets: nextAssets)
+        assets = nextAssets
         transactions = nextTransactions
         quickEntryDraft = nil
     }
@@ -329,7 +347,7 @@ final class AppStore {
         assets = nextAssets
     }
 
-    func addFundActivity(assetID: UUID, kind: FundActivityKind, amount: Decimal, note: String) throws {
+    func addFundActivity(assetID: UUID, kind: FundActivityKind, amount: Decimal, note: String, occurredAt: Date = Date()) throws {
         var nextAssets = assets
         guard let index = nextAssets.firstIndex(where: { $0.id == assetID }),
               nextAssets[index].kind == .fund
@@ -342,7 +360,7 @@ final class AppStore {
             id: UUID(),
             kind: kind,
             amount: amount,
-            occurredAt: Date(),
+            occurredAt: occurredAt,
             note: trimmedNote
         )
 
@@ -364,8 +382,8 @@ final class AppStore {
         assets = nextAssets
     }
 
-    func addFundProfit(assetID: UUID, amount: Decimal, note: String) throws {
-        try addFundActivity(assetID: assetID, kind: .valuation, amount: amount, note: note)
+    func addFundProfit(assetID: UUID, amount: Decimal, note: String, occurredAt: Date = Date()) throws {
+        try addFundActivity(assetID: assetID, kind: .valuation, amount: amount, note: note, occurredAt: occurredAt)
         quickEntryDraft = nil
     }
 
@@ -566,6 +584,56 @@ final class AppStore {
     private func persistLedger(transactions: [MoneyTransaction], assets: [AssetItem]) throws {
         guard let database else { throw AppStoreFailure.databaseUnavailable }
         try database.saveLedger(transactions: transactions, assets: assets)
+    }
+
+    private func makeTransaction(
+        id: UUID,
+        kind: TransactionKind,
+        amount: Decimal,
+        category: MoneyCategory,
+        account: MoneyAccount,
+        title: String,
+        paymentAccount: MoneyAccount?,
+        installmentMonths: Int?,
+        occurredAt: Date,
+        assets: inout [AssetItem]
+    ) -> MoneyTransaction {
+        let accountKind = assets.first { $0.id == account.id }?.kind
+        let usesInstallmentPlan = kind == .expense
+            && !category.isRepayment
+            && (installmentMonths ?? 0) > 0
+            && (accountKind?.supportsInstallment ?? false)
+        let addsCurrentMonthRepayment = kind == .expense
+            && !category.isRepayment
+            && !usesInstallmentPlan
+            && (accountKind?.isDebtAccount ?? false)
+        let appliesRepayment = kind == .expense
+            && category.isRepayment
+            && (accountKind?.isDebtAccount ?? false)
+
+        var repaymentAdjustments: [RepaymentAdjustment] = []
+        if usesInstallmentPlan, let installmentMonths {
+            repaymentAdjustments = addRepaymentPlan(to: &assets, accountID: account.id, amount: amount, months: installmentMonths)
+        }
+        if addsCurrentMonthRepayment {
+            repaymentAdjustments = addCurrentMonthRepayment(to: &assets, accountID: account.id, amount: amount)
+        }
+        if appliesRepayment {
+            repaymentAdjustments = applyRepayment(to: &assets, accountID: account.id, amount: amount)
+        }
+
+        return MoneyTransaction(
+            id: id,
+            kind: kind,
+            title: title,
+            category: category,
+            account: account,
+            paymentAccount: category.isRepayment ? paymentAccount : nil,
+            amount: amount,
+            installmentMonths: usesInstallmentPlan ? installmentMonths : nil,
+            repaymentAdjustments: repaymentAdjustments,
+            occurredAt: occurredAt
+        )
     }
 
     private func addRepaymentPlan(to assets: inout [AssetItem], accountID: UUID, amount: Decimal, months: Int) -> [RepaymentAdjustment] {

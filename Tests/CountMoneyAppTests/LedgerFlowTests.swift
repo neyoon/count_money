@@ -263,6 +263,73 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertFalse(store.overview.recentTransactions.contains { $0.id == transaction.id })
     }
 
+    func testAddingTransactionKeepsProvidedDate() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-03-05T10:20:30Z"))
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 42,
+            category: food,
+            account: debit,
+            title: "指定日期",
+            occurredAt: date
+        )
+
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "指定日期" })
+        XCTAssertEqual(transaction.occurredAt, date)
+    }
+
+    func testUpdatingTransactionRecalculatesLedgerEffects() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let credit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "信用卡" })
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let food = try XCTUnwrap(store.expenseCategories.first { $0.presetKey == "expense_food" })
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-03-05T10:20:30Z"))
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 120,
+            category: food,
+            account: credit,
+            title: "待修改"
+        )
+        let transaction = try XCTUnwrap(store.transactions.first { $0.title == "待修改" })
+
+        try store.updateTransaction(
+            transaction,
+            kind: .expense,
+            amount: 60,
+            category: food,
+            account: debit,
+            title: "已修改",
+            occurredAt: date
+        )
+
+        let updated = try XCTUnwrap(store.transactions.first { $0.id == transaction.id })
+        XCTAssertEqual(updated.title, "已修改")
+        XCTAssertEqual(updated.amount, 60)
+        XCTAssertEqual(updated.account.id, debit.id)
+        XCTAssertEqual(updated.occurredAt, date)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == credit.id }?.currentMonthRepayment, 0)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == credit.id }?.balance, 0)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, -60)
+    }
+
     func testDebtAccountsCanSpendButCannotFundRepayment() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")

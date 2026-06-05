@@ -1,24 +1,23 @@
-import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct EntryView: View {
     var store: AppStore
+    var isActive = true
 
     @State private var selectedKind: TransactionKind = .expense
     @State private var amountText = ""
     @State private var selectedCategory: MoneyCategory = PreviewData.expenseCategories[0]
     @State private var selectedAccountID: UUID?
     @State private var selectedPaymentAccountID: UUID?
-    @State private var selectedImageItem: PhotosPickerItem?
-    @State private var ocrError: String?
     @State private var saveError: String?
-    @State private var isRecognizing = false
     @State private var isApplyingDraft = false
     @State private var useInstallment = false
     @State private var installmentMonths = 3
     @State private var isFundLoss = false
     @State private var appliedDraftID: UUID?
+    @State private var entryDate = Date()
+    @State private var isSelectingEntryDate = false
 
     private var visibleCategories: [MoneyCategory] {
         store.categories(for: selectedKind)
@@ -120,8 +119,7 @@ struct EntryView: View {
                         if let first = store.categories(for: newValue).first {
                             selectedCategory = first
                         }
-                        selectedAccountID = entryAccounts.first?.id
-                        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+                        ensureSelectedAccountsAreValid()
                         if newValue != .expense || selectedCategory.isRepayment {
                             useInstallment = false
                         }
@@ -138,9 +136,7 @@ struct EntryView: View {
                     installmentSection
                     categorySection
                     saveButton
-                    if selectedKind == .expense || selectedKind == .income {
-                        screenshotButton
-                    }
+                    entryDateButton
 
                     Spacer()
                 }
@@ -149,16 +145,20 @@ struct EntryView: View {
             .padding()
             .background(AppColor.background)
             .onAppear {
-                if selectedAccountID == nil {
-                    selectedAccountID = store.paymentAccounts.first?.id
-                }
-                if selectedPaymentAccountID == nil {
-                    selectedPaymentAccountID = store.repaymentPaymentAccounts.first?.id
-                }
+                resetEntryDateToToday()
+                ensureSelectedAccountsAreValid()
                 applyQuickEntryDraftIfNeeded(store.quickEntryDraft)
+            }
+            .onChange(of: isActive) { _, isActive in
+                if !isActive {
+                    resetEntryDateToToday()
+                }
             }
             .onChange(of: store.quickEntryDraft) { _, draft in
                 applyQuickEntryDraftIfNeeded(draft)
+            }
+            .sheet(isPresented: $isSelectingEntryDate) {
+                EntryDatePickerSheet(selectedDate: $entryDate)
             }
             .alert("保存失败", isPresented: Binding(
                 get: { saveError != nil },
@@ -230,7 +230,7 @@ struct EntryView: View {
                     get: { selectedAccount?.id ?? entryAccounts[0].id },
                     set: { newValue in
                         selectedAccountID = newValue
-                        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+                        ensureSelectedPaymentAccountIsValid()
                         let asset = store.ledgerAssets.first { $0.id == newValue }
                         if selectedCategory.isRepayment || !(asset?.kind.supportsInstallment ?? false) {
                             useInstallment = false
@@ -398,30 +398,36 @@ struct EntryView: View {
         }
     }
 
-    private var screenshotButton: some View {
-        PhotosPicker(selection: $selectedImageItem, matching: .images) {
-            Label("截图识别金额", systemImage: "viewfinder")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(AppColor.primary)
-        .disabled(isRecognizing)
-        .onChange(of: selectedImageItem) { _, item in
-            guard let item else { return }
-            Task {
-                await recognizeAmount(from: item)
+    private var entryDateButton: some View {
+        Button {
+            isSelectingEntryDate = true
+        } label: {
+            HStack {
+                Text("记账日期")
+                    .font(.headline)
+                Spacer()
+                if let entryDateText {
+                    Text(entryDateText)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
         }
-        .alert("识别失败", isPresented: Binding(
-            get: { ocrError != nil },
-            set: { if !$0 { ocrError = nil } }
-        )) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(ocrError ?? "")
+        .buttonStyle(.bordered)
+        .tint(AppColor.primary)
+    }
+
+    private var entryDateText: String? {
+        if Calendar.current.isDateInToday(entryDate) {
+            return nil
         }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy 年 M 月 d 日"
+        return formatter.string(from: entryDate)
     }
 
     private var saveButton: some View {
@@ -435,7 +441,12 @@ struct EntryView: View {
             do {
                 if selectedKind == .fundProfit {
                     let signedAmount = isFundLoss ? -parsedAmount : parsedAmount
-                    try store.addFundProfit(assetID: selectedAccount.id, amount: signedAmount, note: "")
+                    try store.addFundProfit(
+                        assetID: selectedAccount.id,
+                        amount: signedAmount,
+                        note: "",
+                        occurredAt: EntryDateHelper.occurredAt(on: entryDate)
+                    )
                 } else {
                     try store.addTransaction(
                         kind: selectedKind,
@@ -444,7 +455,8 @@ struct EntryView: View {
                         account: selectedAccount,
                         title: selectedCategory.name,
                         paymentAccount: isRepaymentEntry ? selectedPaymentAccount : nil,
-                        installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil
+                        installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil,
+                        occurredAt: EntryDateHelper.occurredAt(on: entryDate)
                     )
                 }
                 amountText = ""
@@ -463,35 +475,9 @@ struct EntryView: View {
         .disabled(!canSaveEntry)
     }
 
-    private func recognizeAmount(from item: PhotosPickerItem) async {
-        isRecognizing = true
-        defer {
-            isRecognizing = false
-            selectedImageItem = nil
-        }
-
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
-                throw OCRFailure.invalidImage
-            }
-
-            let draft = try await ScreenshotOCRService.makeDraft(from: data)
-            store.applyQuickEntryDraft(draft)
-            applyAmount(draft.candidateAmount)
-            selectedKind = draft.suggestedKind
-
-            if let first = store.categories(for: draft.suggestedKind).first {
-                selectedCategory = first
-            }
-        } catch {
-            ocrError = error.localizedDescription
-        }
-    }
-
     private func selectCategory(_ category: MoneyCategory) {
         selectedCategory = category
-        selectedAccountID = entryAccounts.first?.id
-        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+        ensureSelectedAccountsAreValid()
         if category.isRepayment {
             useInstallment = false
         }
@@ -512,6 +498,85 @@ struct EntryView: View {
         if let first = store.categories(for: draft.suggestedKind).first {
             selectedCategory = first
         }
+        ensureSelectedAccountsAreValid()
+    }
+
+    private func ensureSelectedAccountsAreValid() {
+        ensureSelectedEntryAccountIsValid()
+        ensureSelectedPaymentAccountIsValid()
+    }
+
+    private func ensureSelectedEntryAccountIsValid() {
+        if let selectedAccountID,
+           entryAccounts.contains(where: { $0.id == selectedAccountID }) {
+            return
+        }
+
+        selectedAccountID = entryAccounts.first?.id
+    }
+
+    private func ensureSelectedPaymentAccountIsValid() {
+        guard isRepaymentEntry else { return }
+        if let selectedPaymentAccountID,
+           repaymentPaymentAccounts.contains(where: { $0.id == selectedPaymentAccountID }) {
+            return
+        }
+
+        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+    }
+
+    private func resetEntryDateToToday() {
+        entryDate = Date()
+    }
+}
+
+private struct EntryDatePickerSheet: View {
+    @Binding var selectedDate: Date
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            DatePicker(
+                "记账日期",
+                selection: $selectedDate,
+                in: EntryDateHelper.allowedRange,
+                displayedComponents: .date
+            )
+                .datePickerStyle(.graphical)
+                .padding()
+                .navigationTitle("记账日期")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+        .presentationDetents([.large])
+    }
+}
+
+private enum EntryDateHelper {
+    static var allowedRange: ClosedRange<Date> {
+        let calendar = Calendar.current
+        let start = calendar.date(from: DateComponents(year: 1998, month: 1, day: 1)) ?? Date.distantPast
+        let end = calendar.date(from: DateComponents(year: 2100, month: 12, day: 31)) ?? Date.distantFuture
+        return start...end
+    }
+
+    static func occurredAt(on date: Date, keepingTimeFrom time: Date = Date()) -> Date {
+        let calendar = Calendar.current
+        let dateComponents = calendar.dateComponents([.year, .month, .day], from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute, .second], from: time)
+        return calendar.date(from: DateComponents(
+            year: dateComponents.year,
+            month: dateComponents.month,
+            day: dateComponents.day,
+            hour: timeComponents.hour,
+            minute: timeComponents.minute,
+            second: timeComponents.second
+        )) ?? date
     }
 }
 
@@ -585,7 +650,11 @@ struct TransactionsView: View {
                         availableMonths: availableMonths
                     )
 
-                    RecentTransactionsSection(transactions: recentTransactions)
+                    RecentTransactionsSection(
+                        store: store,
+                        transactions: recentTransactions,
+                        message: $message
+                    )
                 }
                 .padding([.horizontal, .top])
             }
@@ -867,15 +936,11 @@ struct TransactionDateDetailView: View {
     var body: some View {
         List {
             ForEach(sortedTransactions) { transaction in
-                TransactionRow(transaction: transaction)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            deleteTransaction(transaction)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .tint(.red)
-                }
+                EditableTransactionRow(
+                    store: store,
+                    transaction: transaction,
+                    message: $message
+                )
             }
         }
         .tabBarScrollableContentInset()
@@ -891,14 +956,6 @@ struct TransactionDateDetailView: View {
         }
     }
 
-    private func deleteTransaction(_ transaction: MoneyTransaction) {
-        do {
-            try store.deleteTransaction(transaction)
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
     private static func dateText(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "M 月 d 日 EEEE"
@@ -906,8 +963,436 @@ struct TransactionDateDetailView: View {
     }
 }
 
+private struct EditableTransactionRow: View {
+    var store: AppStore
+    var transaction: MoneyTransaction
+    @Binding var message: String?
+    @State private var transactionBeingEdited: MoneyTransaction?
+
+    var body: some View {
+        TransactionRow(transaction: transaction)
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    deleteTransaction()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .tint(.red)
+
+                Button {
+                    transactionBeingEdited = transaction
+                } label: {
+                    Image(systemName: "pencil.circle")
+                }
+                .tint(AppColor.primary)
+            }
+            .sheet(item: $transactionBeingEdited) { transaction in
+                TransactionEditView(store: store, transaction: transaction)
+            }
+    }
+
+    private func deleteTransaction() {
+        do {
+            try store.deleteTransaction(transaction)
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+}
+
+private struct TransactionEditView: View {
+    var store: AppStore
+    var transaction: MoneyTransaction
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedKind: TransactionKind
+    @State private var titleText: String
+    @State private var amountText: String
+    @State private var selectedCategory: MoneyCategory
+    @State private var selectedAccountID: UUID?
+    @State private var selectedPaymentAccountID: UUID?
+    @State private var selectedDate: Date
+    @State private var useInstallment: Bool
+    @State private var installmentMonths: Int
+    @State private var saveError: String?
+
+    init(store: AppStore, transaction: MoneyTransaction) {
+        self.store = store
+        self.transaction = transaction
+        let initialKind = transaction.kind == .income ? TransactionKind.income : .expense
+        let visibleCategories = store.categories(for: initialKind)
+        let initialCategory = visibleCategories.first { $0.id == transaction.category.id }
+            ?? visibleCategories.first
+            ?? transaction.category
+
+        _selectedKind = State(initialValue: initialKind)
+        _titleText = State(initialValue: transaction.title)
+        _amountText = State(initialValue: NSDecimalNumber(decimal: transaction.amount).stringValue)
+        _selectedCategory = State(initialValue: initialCategory)
+        _selectedAccountID = State(initialValue: transaction.account.id)
+        _selectedPaymentAccountID = State(initialValue: transaction.paymentAccount?.id)
+        _selectedDate = State(initialValue: transaction.occurredAt)
+        _useInstallment = State(initialValue: transaction.installmentMonths != nil)
+        _installmentMonths = State(initialValue: transaction.installmentMonths ?? 3)
+    }
+
+    private var visibleCategories: [MoneyCategory] {
+        store.categories(for: selectedKind)
+    }
+
+    private var parsedAmount: Decimal? {
+        Decimal.moneyString(amountText)
+    }
+
+    private var selectedAccount: MoneyAccount? {
+        if let selectedAccountID,
+           let account = entryAccounts.first(where: { $0.id == selectedAccountID }) {
+            return account
+        }
+
+        return entryAccounts.first
+    }
+
+    private var selectedAsset: AssetItem? {
+        selectedAccount.flatMap(store.asset(for:))
+    }
+
+    private var selectedPaymentAccount: MoneyAccount? {
+        if let selectedPaymentAccountID,
+           let account = repaymentPaymentAccounts.first(where: { $0.id == selectedPaymentAccountID }) {
+            return account
+        }
+
+        return repaymentPaymentAccounts.first
+    }
+
+    private var entryAccounts: [MoneyAccount] {
+        if isRepaymentEntry {
+            return store.repaymentAccounts
+        }
+
+        return store.paymentAccounts
+    }
+
+    private var repaymentPaymentAccounts: [MoneyAccount] {
+        store.repaymentPaymentAccounts
+            .filter { $0.id != selectedAccount?.id }
+    }
+
+    private var canUseInstallment: Bool {
+        selectedKind == .expense
+            && !selectedCategory.isRepayment
+            && (selectedAsset?.kind.supportsInstallment ?? false)
+    }
+
+    private var isRepaymentEntry: Bool {
+        selectedKind == .expense && selectedCategory.isRepayment
+    }
+
+    private var canSave: Bool {
+        guard let parsedAmount, parsedAmount > 0, selectedAccount != nil else { return false }
+        if isRepaymentEntry, selectedPaymentAccount == nil {
+            return false
+        }
+        return true
+    }
+
+    private var categoryColumns: [GridItem] {
+        [
+            GridItem(.adaptive(minimum: 78), spacing: 10)
+        ]
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    kindSection
+                    amountSection
+                    titleSection
+                    dateSection
+                    accountSection
+                    repaymentPaymentAccountSection
+                    installmentSection
+                    categorySection
+                    saveButton
+                }
+                .padding()
+            }
+            .background(AppColor.background)
+            .navigationTitle("修改账目")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear(perform: ensureSelectedAccountsAreValid)
+            .alert("保存失败", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(saveError ?? "")
+            }
+        }
+    }
+
+    private var kindSection: some View {
+        Picker("类型", selection: $selectedKind) {
+            Text(TransactionKind.expense.title).tag(TransactionKind.expense)
+            Text(TransactionKind.income.title).tag(TransactionKind.income)
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: selectedKind) { _, newValue in
+            if let first = store.categories(for: newValue).first {
+                selectedCategory = first
+            }
+            ensureSelectedAccountsAreValid()
+            if newValue != .expense || selectedCategory.isRepayment {
+                useInstallment = false
+            }
+        }
+    }
+
+    private var amountSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("金额")
+                .font(.subheadline)
+                .foregroundStyle(AppColor.muted)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("¥")
+                    .font(.title2.weight(.medium))
+                    .foregroundStyle(AppColor.muted)
+
+                TextField("0", text: $amountText)
+                    .font(.system(size: 38, weight: .semibold, design: .rounded))
+                    #if os(iOS)
+                    .keyboardType(.decimalPad)
+                    #endif
+            }
+        }
+        .surface()
+    }
+
+    private var titleSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("名称")
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
+
+            TextField("账目名称", text: $titleText)
+                .textFieldStyle(.roundedBorder)
+        }
+        .surface()
+    }
+
+    private var dateSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("日期")
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
+
+            DatePicker(
+                "记账日期",
+                selection: $selectedDate,
+                in: EntryDateHelper.allowedRange,
+                displayedComponents: .date
+            )
+        }
+        .surface()
+    }
+
+    private var accountSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(accountTitle)
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
+
+            if entryAccounts.isEmpty {
+                Text(isRepaymentEntry ? "请先在资产页添加待还账户。" : "请先在资产页添加可记账账户。")
+                    .font(.subheadline)
+                    .foregroundStyle(AppColor.muted)
+            } else {
+                Picker("账户", selection: Binding(
+                    get: { selectedAccount?.id ?? entryAccounts[0].id },
+                    set: { newValue in
+                        selectedAccountID = newValue
+                        ensureSelectedPaymentAccountIsValid()
+                        let asset = store.ledgerAssets.first { $0.id == newValue }
+                        if selectedCategory.isRepayment || !(asset?.kind.supportsInstallment ?? false) {
+                            useInstallment = false
+                        }
+                    }
+                )) {
+                    ForEach(entryAccounts) { account in
+                        Label(account.name, systemImage: account.symbolName)
+                            .tag(account.id)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        }
+        .surface()
+    }
+
+    private var accountTitle: String {
+        if isRepaymentEntry {
+            return "还款账户"
+        }
+
+        return selectedKind == .expense ? "支付账户" : "收款账户"
+    }
+
+    @ViewBuilder
+    private var repaymentPaymentAccountSection: some View {
+        if isRepaymentEntry {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("支付账户")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
+
+                if repaymentPaymentAccounts.isEmpty {
+                    Text("请先在资产页添加可支付的余额账户。")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColor.muted)
+                } else {
+                    Picker("支付账户", selection: Binding(
+                        get: { selectedPaymentAccount?.id ?? repaymentPaymentAccounts[0].id },
+                        set: { selectedPaymentAccountID = $0 }
+                    )) {
+                        ForEach(repaymentPaymentAccounts) { account in
+                            Label(account.name, systemImage: account.symbolName)
+                                .tag(account.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+            .surface()
+        }
+    }
+
+    @ViewBuilder
+    private var installmentSection: some View {
+        if canUseInstallment {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $useInstallment) {
+                    Label("分期付款", systemImage: "calendar.badge.clock")
+                        .font(.headline)
+                        .foregroundStyle(AppColor.ink)
+                }
+
+                if useInstallment {
+                    Picker("分期月数", selection: $installmentMonths) {
+                        ForEach(1...24, id: \.self) { month in
+                            Text("\(month) 个月").tag(month)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+            .surface()
+        }
+    }
+
+    @ViewBuilder
+    private var categorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(selectedKind == .expense ? "支出分类" : "收入分类")
+                .font(.headline)
+                .foregroundStyle(AppColor.ink)
+
+            LazyVGrid(columns: categoryColumns, spacing: 10) {
+                ForEach(visibleCategories) { category in
+                    CategoryButton(
+                        category: category,
+                        isSelected: category.id == selectedCategory.id
+                    ) {
+                        selectedCategory = category
+                        ensureSelectedAccountsAreValid()
+                        if category.isRepayment {
+                            useInstallment = false
+                        }
+                    }
+                }
+            }
+        }
+        .surface()
+    }
+
+    private var saveButton: some View {
+        Button {
+            save()
+        } label: {
+            Label("保存修改", systemImage: "checkmark")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColor.success)
+        .disabled(!canSave)
+    }
+
+    private func save() {
+        guard let parsedAmount,
+              let selectedAccount
+        else {
+            return
+        }
+
+        do {
+            let trimmedTitle = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
+            try store.updateTransaction(
+                transaction,
+                kind: selectedKind,
+                amount: parsedAmount,
+                category: selectedCategory,
+                account: selectedAccount,
+                title: trimmedTitle.isEmpty ? selectedCategory.name : trimmedTitle,
+                paymentAccount: isRepaymentEntry ? selectedPaymentAccount : nil,
+                installmentMonths: useInstallment && canUseInstallment ? installmentMonths : nil,
+                occurredAt: EntryDateHelper.occurredAt(on: selectedDate, keepingTimeFrom: transaction.occurredAt)
+            )
+            dismiss()
+        } catch {
+            saveError = error.localizedDescription
+        }
+    }
+
+    private func ensureSelectedAccountsAreValid() {
+        ensureSelectedEntryAccountIsValid()
+        ensureSelectedPaymentAccountIsValid()
+    }
+
+    private func ensureSelectedEntryAccountIsValid() {
+        if let selectedAccountID,
+           entryAccounts.contains(where: { $0.id == selectedAccountID }) {
+            return
+        }
+
+        selectedAccountID = entryAccounts.first?.id
+    }
+
+    private func ensureSelectedPaymentAccountIsValid() {
+        guard isRepaymentEntry else { return }
+        if let selectedPaymentAccountID,
+           repaymentPaymentAccounts.contains(where: { $0.id == selectedPaymentAccountID }) {
+            return
+        }
+
+        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+    }
+}
+
 struct RecentTransactionsSection: View {
+    var store: AppStore
     var transactions: [MoneyTransaction]
+    @Binding var message: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -923,7 +1408,11 @@ struct RecentTransactionsSection: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(transactions) { transaction in
-                        TransactionRow(transaction: transaction)
+                        EditableTransactionRow(
+                            store: store,
+                            transaction: transaction,
+                            message: $message
+                        )
 
                         if transaction.id != transactions.last?.id {
                             Divider()

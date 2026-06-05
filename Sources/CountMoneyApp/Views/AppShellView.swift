@@ -127,7 +127,7 @@ struct AppShellView: View {
         case .home:
             DashboardView(store: store)
         case .entry:
-            EntryView(store: store)
+            EntryView(store: store, isActive: selectedTab == .entry)
         case .accounts:
             AccountsView(store: store)
         case .settings:
