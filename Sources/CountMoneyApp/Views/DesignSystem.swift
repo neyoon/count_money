@@ -24,7 +24,7 @@ enum AppColor {
 
 enum AppLayout {
     static let tabBarScrollableContentInset: CGFloat = 75
-    static let historyPullDistance: CGFloat = 180
+    static let historyPullDistance: CGFloat = 240
 }
 
 enum AppDateRange {

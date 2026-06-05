@@ -107,42 +107,41 @@ struct EntryView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    Picker("类型", selection: $selectedKind) {
-                        ForEach(TransactionKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
-                        }
+            VStack(spacing: 16) {
+                Picker("类型", selection: $selectedKind) {
+                    ForEach(TransactionKind.allCases) { kind in
+                        Text(kind.title).tag(kind)
                     }
-                    .pickerStyle(.segmented)
-                    .onChange(of: selectedKind) { _, newValue in
-                        if let first = store.categories(for: newValue).first {
-                            selectedCategory = first
-                        }
-                        ensureSelectedAccountsAreValid()
-                        if newValue != .expense || selectedCategory.isRepayment {
-                            useInstallment = false
-                        }
-                        if newValue != .fundProfit {
-                            isFundLoss = false
-                        }
-                    }
-
-                    amountSection
-                    fundProfitDirectionSection
-                    draftSection
-                    accountSection
-                    repaymentPaymentAccountSection
-                    installmentSection
-                    categorySection
-                    saveButton
-                    entryDateButton
-
-                    Spacer()
                 }
+                .pickerStyle(.segmented)
+                .onChange(of: selectedKind) { _, newValue in
+                    if let first = store.categories(for: newValue).first {
+                        selectedCategory = first
+                    }
+                    ensureSelectedAccountsAreValid()
+                    if newValue != .expense || selectedCategory.isRepayment {
+                        useInstallment = false
+                    }
+                    if newValue != .fundProfit {
+                        isFundLoss = false
+                    }
+                }
+
+                amountSection
+                fundProfitDirectionSection
+                draftSection
+                accountSection
+                repaymentPaymentAccountSection
+                installmentSection
+                categorySection
+                saveButton
+                entryDateButton
+
+                Spacer()
             }
             .tabBarScrollableContentInset()
             .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(AppColor.background)
             .onAppear {
                 resetEntryDateToToday()
@@ -2136,14 +2135,16 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("数据") {
+                Section("测试性功能") {
                     Toggle(isOn: Binding(
                         get: { store.historyMode },
                         set: { store.historyMode = $0 }
                     )) {
                         Label("历史功能", systemImage: "clock.arrow.circlepath")
                     }
+                }
 
+                Section("数据") {
                     Toggle(isOn: Binding(
                         get: { store.initializationMode },
                         set: { store.initializationMode = $0 }

@@ -6,6 +6,8 @@ import UIKit
 struct AppShellView: View {
     private let tabBarHeight: CGFloat = 56
     private let bottomContentInset: CGFloat = 96
+    private let pageSwipeMinimumDistance: CGFloat = 28
+    private let pageSwipeCommitDistance: CGFloat = 84
 
     @State private var store = AppStore()
     @State private var selectedTab: AppTab = .home
@@ -76,7 +78,7 @@ struct AppShellView: View {
     }
 
     private var pageSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 20)
+        DragGesture(minimumDistance: pageSwipeMinimumDistance)
             .onChanged { value in
                 let width = value.translation.width
                 let height = value.translation.height
@@ -97,7 +99,7 @@ struct AppShellView: View {
                     resetDragOffset()
                     return
                 }
-                guard abs(width) > abs(height) * 1.4, abs(width) > 60 else {
+                guard abs(width) > abs(height) * 1.4, abs(width) > pageSwipeCommitDistance else {
                     resetDragOffset()
                     return
                 }
