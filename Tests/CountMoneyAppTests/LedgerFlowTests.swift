@@ -88,18 +88,32 @@ final class LedgerFlowTests: XCTestCase {
 
         let source = AppStore(database: try SQLiteDatabase(url: sourceURL))
         let account = try XCTUnwrap(source.paymentAccounts.first { $0.name == "借记卡" })
+        var fund = try XCTUnwrap(source.assets.first { $0.kind == .fund })
         let salary = try XCTUnwrap(source.incomeCategories.first { $0.presetKey == "income_salary" })
         let food = try XCTUnwrap(source.expenseCategories.first { $0.presetKey == "expense_food" })
 
+        fund.fundCost = 1_000
+        fund.fundMarketValue = 1_050
+        fund.balance = fund.fundCurrentValue
+        try source.updateAsset(fund)
+        try source.addFundActivity(assetID: fund.id, kind: .investment, amount: 500, note: "定投")
+        try source.addFundActivity(assetID: fund.id, kind: .valuation, amount: -25, note: "回撤")
         try source.addTransaction(kind: .income, amount: 1_000, category: salary, account: account, title: "工资")
         try source.addTransaction(kind: .expense, amount: 38, category: food, account: account, title: "午饭")
 
         let data = try source.exportData()
-        let records = try JSONDecoder().decode([TransactionExportRecord].self, from: data)
+        let exportFile = try JSONDecoder().decode(LedgerExportFile.self, from: data)
+        let fundRecord = try XCTUnwrap(exportFile.assets.first { $0.id == fund.id.uuidString })
 
-        XCTAssertEqual(records.count, 2)
-        XCTAssertTrue(records.allSatisfy { $0.accountID != nil })
-        XCTAssertTrue(records.allSatisfy { $0.accountKind == AssetKind.debitCard.rawValue })
+        XCTAssertEqual(exportFile.version, 2)
+        XCTAssertEqual(exportFile.transactions.count, 2)
+        XCTAssertTrue(exportFile.transactions.allSatisfy { $0.accountID != nil })
+        XCTAssertTrue(exportFile.transactions.allSatisfy { $0.accountKind == AssetKind.debitCard.rawValue })
+        XCTAssertEqual(fundRecord.kind, AssetKind.fund.rawValue)
+        XCTAssertEqual(fundRecord.fundCost, "1500")
+        XCTAssertEqual(fundRecord.fundMarketValue, "1025")
+        XCTAssertEqual(fundRecord.balance, "1025")
+        XCTAssertEqual(fundRecord.fundActivities.count, 2)
 
         let destination = AppStore(database: try SQLiteDatabase(url: destinationURL))
         try destination.importData(data)
@@ -108,6 +122,13 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(destination.transactions.contains { $0.title == "工资" })
         XCTAssertTrue(destination.transactions.contains { $0.title == "午饭" })
         XCTAssertEqual(destination.paymentAccounts.first { $0.name == "借记卡" }?.balance, 962)
+        let importedFund = try XCTUnwrap(destination.assets.first { $0.id == fund.id })
+        XCTAssertEqual(importedFund.fundCost, 1_500)
+        XCTAssertEqual(importedFund.fundMarketValue, 1_025)
+        XCTAssertEqual(importedFund.balance, 1_025)
+        XCTAssertEqual(importedFund.fundActivities.count, 2)
+        XCTAssertTrue(importedFund.fundActivities.contains { $0.kind == .investment && $0.amount == 500 && $0.note == "定投" })
+        XCTAssertTrue(importedFund.fundActivities.contains { $0.kind == .valuation && $0.amount == -25 && $0.note == "回撤" })
     }
 
     func testDeletingAccountUsedByTransactionsIsRejected() throws {

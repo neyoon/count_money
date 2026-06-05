@@ -595,3 +595,46 @@ struct TransactionExportRecord: Codable, Identifiable {
     var repaymentAdjustments: [RepaymentAdjustment]? = nil
     var occurredAt: String
 }
+
+struct LedgerExportFile: Codable {
+    var version: Int
+    var exportedAt: String
+    var categories: [CategoryExportRecord]
+    var assets: [AssetExportRecord]
+    var transactions: [TransactionExportRecord]
+}
+
+struct CategoryExportRecord: Codable, Identifiable {
+    var id: String
+    var presetKey: String
+    var name: String
+    var kind: String
+    var symbolName: String
+    var sortOrder: Int
+    var isSystemPreset: Bool
+}
+
+struct AssetExportRecord: Codable, Identifiable {
+    var id: String
+    var name: String
+    var kind: String
+    var balance: String
+    var repayments: [RepaymentExportRecord]
+    var fundCost: String? = nil
+    var fundMarketValue: String? = nil
+    var fundActivities: [FundActivityExportRecord] = []
+}
+
+struct RepaymentExportRecord: Codable, Identifiable {
+    var id: String
+    var monthOffset: Int
+    var amount: String
+}
+
+struct FundActivityExportRecord: Codable, Identifiable {
+    var id: String
+    var kind: String
+    var amount: String
+    var occurredAt: String
+    var note: String
+}

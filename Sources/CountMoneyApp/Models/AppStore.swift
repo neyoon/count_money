@@ -427,16 +427,78 @@ final class AppStore {
     }
 
     func exportData() throws -> Data {
-        let records = transactions.map(makeExportRecord)
+        let exportFile = LedgerExportFile(
+            version: 2,
+            exportedAt: ISO8601DateFormatter().string(from: Date()),
+            categories: (expenseCategories + incomeCategories).map(makeExportRecord),
+            assets: assets.map(makeExportRecord),
+            transactions: transactions.map(makeExportRecord)
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(records)
+        return try encoder.encode(exportFile)
     }
 
     func importData(_ data: Data) throws {
-        let records = try JSONDecoder().decode([TransactionExportRecord].self, from: data)
+        let decoder = JSONDecoder()
+        if let exportFile = try? decoder.decode(LedgerExportFile.self, from: data) {
+            try importLedger(exportFile)
+            return
+        }
+
+        let records = try decoder.decode([TransactionExportRecord].self, from: data)
+        try importTransactions(records)
+    }
+
+    private func importLedger(_ exportFile: LedgerExportFile) throws {
+        var nextExpenseCategories = expenseCategories
+        var nextIncomeCategories = incomeCategories
+        mergeCategories(
+            exportFile.categories,
+            expenseCategories: &nextExpenseCategories,
+            incomeCategories: &nextIncomeCategories
+        )
+
+        var nextAssets = assets
+        let importedAssets = try exportFile.assets.map(makeAsset)
+        mergeAssets(importedAssets, into: &nextAssets)
+
+        var nextTransactions = transactions
+        try appendTransactions(
+            exportFile.transactions,
+            assets: &nextAssets,
+            transactions: &nextTransactions,
+            categories: nextExpenseCategories + nextIncomeCategories
+        )
+
+        nextTransactions.sort { $0.occurredAt > $1.occurredAt }
+        try persistCategories(nextExpenseCategories + nextIncomeCategories)
+        try persistLedger(transactions: nextTransactions, assets: nextAssets)
+        expenseCategories = nextExpenseCategories
+        incomeCategories = nextIncomeCategories
+        assets = nextAssets
+        transactions = nextTransactions
+        quickEntryDraft = nil
+    }
+
+    private func importTransactions(_ records: [TransactionExportRecord]) throws {
         var nextAssets = assets
         var nextTransactions = transactions
+        try appendTransactions(records, assets: &nextAssets, transactions: &nextTransactions)
+
+        nextTransactions.sort { $0.occurredAt > $1.occurredAt }
+        try persistLedger(transactions: nextTransactions, assets: nextAssets)
+        assets = nextAssets
+        transactions = nextTransactions
+        quickEntryDraft = nil
+    }
+
+    private func appendTransactions(
+        _ records: [TransactionExportRecord],
+        assets: inout [AssetItem],
+        transactions: inout [MoneyTransaction],
+        categories: [MoneyCategory]? = nil
+    ) throws {
         var knownTransactionIDs = Set(transactions.map(\.id))
 
         for record in records {
@@ -445,16 +507,53 @@ final class AppStore {
             }
             guard !knownTransactionIDs.contains(recordID) else { continue }
 
-            let transaction = try makeTransaction(from: record, assets: &nextAssets)
-            nextTransactions.append(transaction)
+            let transaction = try makeTransaction(from: record, assets: &assets, categories: categories)
+            transactions.append(transaction)
             knownTransactionIDs.insert(transaction.id)
         }
+    }
 
-        nextTransactions.sort { $0.occurredAt > $1.occurredAt }
-        try persistLedger(transactions: nextTransactions, assets: nextAssets)
-        assets = nextAssets
-        transactions = nextTransactions
-        quickEntryDraft = nil
+    private func makeExportRecord(from category: MoneyCategory) -> CategoryExportRecord {
+        CategoryExportRecord(
+            id: category.id.uuidString,
+            presetKey: category.presetKey,
+            name: category.name,
+            kind: category.kind.rawValue,
+            symbolName: category.symbolName,
+            sortOrder: category.sortOrder,
+            isSystemPreset: category.isSystemPreset
+        )
+    }
+
+    private func makeExportRecord(from asset: AssetItem) -> AssetExportRecord {
+        AssetExportRecord(
+            id: asset.id.uuidString,
+            name: asset.name,
+            kind: asset.kind.rawValue,
+            balance: decimalText(asset.balance),
+            repayments: asset.repayments.map(makeExportRecord),
+            fundCost: asset.fundCost.map(decimalText),
+            fundMarketValue: asset.fundMarketValue.map(decimalText),
+            fundActivities: asset.fundActivities.map(makeExportRecord)
+        )
+    }
+
+    private func makeExportRecord(from repayment: RepaymentMonth) -> RepaymentExportRecord {
+        RepaymentExportRecord(
+            id: repayment.id.uuidString,
+            monthOffset: repayment.monthOffset,
+            amount: decimalText(repayment.amount)
+        )
+    }
+
+    private func makeExportRecord(from activity: FundActivity) -> FundActivityExportRecord {
+        FundActivityExportRecord(
+            id: activity.id.uuidString,
+            kind: activity.kind.rawValue,
+            amount: decimalText(activity.amount),
+            occurredAt: ISO8601DateFormatter().string(from: activity.occurredAt),
+            note: activity.note
+        )
     }
 
     private func makeExportRecord(from transaction: MoneyTransaction) -> TransactionExportRecord {
@@ -474,14 +573,171 @@ final class AppStore {
                 assets.first { $0.id == paymentAccount.id }?.kind.rawValue
             },
             paymentAccountSymbolName: transaction.paymentAccount?.symbolName,
-            amount: NSDecimalNumber(decimal: transaction.amount).stringValue,
+            amount: decimalText(transaction.amount),
             installmentMonths: transaction.installmentMonths,
             repaymentAdjustments: transaction.repaymentAdjustments,
             occurredAt: ISO8601DateFormatter().string(from: transaction.occurredAt)
         )
     }
 
-    private func makeTransaction(from record: TransactionExportRecord, assets: inout [AssetItem]) throws -> MoneyTransaction {
+    private func mergeCategories(
+        _ records: [CategoryExportRecord],
+        expenseCategories: inout [MoneyCategory],
+        incomeCategories: inout [MoneyCategory]
+    ) {
+        for record in records {
+            guard let category = makeCategory(from: record) else { continue }
+
+            switch category.kind {
+            case .expense:
+                upsertCategory(category, into: &expenseCategories)
+            case .income:
+                upsertCategory(category, into: &incomeCategories)
+            }
+        }
+
+        expenseCategories.sort { $0.sortOrder < $1.sortOrder }
+        incomeCategories.sort { $0.sortOrder < $1.sortOrder }
+    }
+
+    private func upsertCategory(_ category: MoneyCategory, into categories: inout [MoneyCategory]) {
+        if let index = categories.firstIndex(where: { $0.presetKey == category.presetKey }) {
+            let existing = categories[index]
+            categories[index] = MoneyCategory(
+                id: existing.id,
+                presetKey: category.presetKey,
+                name: category.name,
+                kind: category.kind,
+                symbolName: category.symbolName,
+                color: existing.color,
+                sortOrder: category.sortOrder,
+                isSystemPreset: category.isSystemPreset
+            )
+        } else {
+            categories.append(category)
+        }
+    }
+
+    private func makeCategory(from record: CategoryExportRecord) -> MoneyCategory? {
+        guard let id = UUID(uuidString: record.id),
+              let kind = CategoryKind(rawValue: record.kind)
+        else {
+            return nil
+        }
+
+        let color = PreviewData.allCategories.first { $0.presetKey == record.presetKey }?.color ?? AppColor.primary
+        return MoneyCategory(
+            id: id,
+            presetKey: record.presetKey,
+            name: record.name,
+            kind: kind,
+            symbolName: record.symbolName,
+            color: color,
+            sortOrder: record.sortOrder,
+            isSystemPreset: record.isSystemPreset
+        )
+    }
+
+    private func makeAsset(from record: AssetExportRecord) throws -> AssetItem {
+        guard let id = UUID(uuidString: record.id),
+              let kind = AssetKind(rawValue: record.kind),
+              let balance = Decimal.moneyString(record.balance)
+        else {
+            throw AppStoreFailure.invalidImportRecord
+        }
+
+        var repayments = try record.repayments.map(makeRepayment)
+        let loadedOffsets = Set(repayments.map(\.monthOffset))
+        for offset in 0..<24 where !loadedOffsets.contains(offset) {
+            repayments.append(RepaymentMonth(id: UUID(), monthOffset: offset, amount: 0))
+        }
+        repayments.sort { $0.monthOffset < $1.monthOffset }
+
+        return AssetItem(
+            id: id,
+            name: record.name,
+            kind: kind,
+            balance: balance,
+            repayments: repayments,
+            fundCost: try optionalMoney(record.fundCost),
+            fundMarketValue: try optionalMoney(record.fundMarketValue),
+            fundActivities: try record.fundActivities.map(makeFundActivity).sorted { $0.occurredAt > $1.occurredAt }
+        )
+    }
+
+    private func makeRepayment(from record: RepaymentExportRecord) throws -> RepaymentMonth {
+        guard let id = UUID(uuidString: record.id),
+              let amount = Decimal.moneyString(record.amount)
+        else {
+            throw AppStoreFailure.invalidImportRecord
+        }
+
+        return RepaymentMonth(id: id, monthOffset: record.monthOffset, amount: amount)
+    }
+
+    private func makeFundActivity(from record: FundActivityExportRecord) throws -> FundActivity {
+        guard let id = UUID(uuidString: record.id),
+              let kind = FundActivityKind(rawValue: record.kind),
+              let amount = Decimal.moneyString(record.amount),
+              let occurredAt = ISO8601DateFormatter().date(from: record.occurredAt)
+        else {
+            throw AppStoreFailure.invalidImportRecord
+        }
+
+        return FundActivity(
+            id: id,
+            kind: kind,
+            amount: amount,
+            occurredAt: occurredAt,
+            note: record.note
+        )
+    }
+
+    private func optionalMoney(_ text: String?) throws -> Decimal? {
+        guard let text else { return nil }
+        guard let value = Decimal.moneyString(text) else {
+            throw AppStoreFailure.invalidImportAmount(text)
+        }
+        return value
+    }
+
+    private func decimalText(_ value: Decimal) -> String {
+        NSDecimalNumber(decimal: value).stringValue
+    }
+
+    private func mergeAssets(_ importedAssets: [AssetItem], into assets: inout [AssetItem]) {
+        for importedAsset in importedAssets {
+            if let index = assets.firstIndex(where: { $0.id == importedAsset.id }) {
+                assets[index] = importedAsset
+                continue
+            }
+
+            if let replaceIndex = emptyLocalAssetIndexMatching(importedAsset, in: assets) {
+                assets[replaceIndex] = importedAsset
+            } else {
+                assets.append(importedAsset)
+            }
+        }
+    }
+
+    private func emptyLocalAssetIndexMatching(_ importedAsset: AssetItem, in assets: [AssetItem]) -> Int? {
+        assets.firstIndex { localAsset in
+            localAsset.name == importedAsset.name
+                && localAsset.kind == importedAsset.kind
+                && localAsset.balance == 0
+                && localAsset.repayments.allSatisfy { $0.amount == 0 }
+                && (localAsset.fundCost == nil || localAsset.fundCost == 0)
+                && (localAsset.fundMarketValue == nil || localAsset.fundMarketValue == 0)
+                && localAsset.fundActivities.isEmpty
+                && !transactions.contains { $0.account.id == localAsset.id || $0.paymentAccount?.id == localAsset.id }
+        }
+    }
+
+    private func makeTransaction(
+        from record: TransactionExportRecord,
+        assets: inout [AssetItem],
+        categories importCategories: [MoneyCategory]? = nil
+    ) throws -> MoneyTransaction {
         guard
             let id = UUID(uuidString: record.id),
             let kind = TransactionKind(rawValue: record.kind),
@@ -498,7 +754,7 @@ final class AppStore {
             id: id,
             kind: kind,
             title: record.title,
-            category: category(record.categoryPresetKey, fallbackKind: kind),
+            category: category(record.categoryPresetKey, fallbackKind: kind, categories: importCategories),
             account: account(for: record, assets: &assets),
             paymentAccount: paymentAccount(for: record, assets: &assets),
             amount: amount,
@@ -520,9 +776,13 @@ final class AppStore {
         )
     }
 
-    private func category(_ presetKey: String, fallbackKind: TransactionKind) -> MoneyCategory {
-        let categories = expenseCategories + incomeCategories
-        if let category = categories.first(where: { $0.presetKey == presetKey }) {
+    private func category(
+        _ presetKey: String,
+        fallbackKind: TransactionKind,
+        categories importCategories: [MoneyCategory]? = nil
+    ) -> MoneyCategory {
+        let candidates = importCategories ?? (expenseCategories + incomeCategories)
+        if let category = candidates.first(where: { $0.presetKey == presetKey }) {
             return category
         }
         return PreviewData.category(presetKey, fallbackKind: fallbackKind)
