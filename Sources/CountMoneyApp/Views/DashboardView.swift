@@ -34,36 +34,23 @@ struct DashboardView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let snapshot = activeHistorySnapshot {
-                        HistoryDateBanner(date: snapshot.date) {
-                            historyDate = nil
-                        }
-                    }
-
-                    if isShowingHistoryActions {
-                        HistoryActionButtons(
-                            onSelectDate: { beginHistoryDateSelection(.view) },
-                            onCompare: { beginHistoryDateSelection(.compare) }
-                        )
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
-                    hero
-                    metrics
-                    weeklyChart
-                    categoryChart
+            GeometryReader { proxy in
+                ScrollView {
+                    dashboardContent(width: proxy.size.width)
+                        .padding(.vertical, pageVerticalPadding)
+                        .padding(.horizontal, pageHorizontalPadding)
+                        .frame(maxWidth: pageMaxWidth, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, alignment: .top)
                 }
-                .padding()
-            }
-            .tabBarScrollableContentInset()
-            .historyPull(enabled: store.historyMode) {
-                withAnimation(.snappy) {
-                    isShowingHistoryActions = true
+                .tabBarScrollableContentInset()
+                .historyPull(enabled: store.historyMode) {
+                    withAnimation(.snappy) {
+                        isShowingHistoryActions = true
+                    }
                 }
+                .background(AppColor.background)
             }
-            .background(AppColor.background)
+            .navigationTitle("总览")
             .sheet(isPresented: $isSelectingHistoryDate) {
                 HistoryDatePickerSheet(title: historySelectionPurpose.title, date: $draftHistoryDate) {
                     applySelectedHistoryDate()
@@ -81,6 +68,80 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func dashboardContent(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let snapshot = activeHistorySnapshot {
+                HistoryDateBanner(date: snapshot.date) {
+                    historyDate = nil
+                }
+            }
+
+            if isShowingHistoryActions {
+                HistoryActionButtons(
+                    onSelectDate: { beginHistoryDateSelection(.view) },
+                    onCompare: { beginHistoryDateSelection(.compare) }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if usesDesktopLayout(width: width) {
+                HStack(alignment: .top, spacing: 16) {
+                    hero
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    metrics
+                        .frame(width: 320, alignment: .top)
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    weeklyChart
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                    categoryChart
+                        .frame(width: 360, alignment: .top)
+                }
+            } else {
+                hero
+                metrics
+                weeklyChart
+                categoryChart
+            }
+        }
+    }
+
+    private var pageMaxWidth: CGFloat {
+        #if os(macOS)
+        1120
+        #else
+        .infinity
+        #endif
+    }
+
+    private var pageHorizontalPadding: CGFloat {
+        #if os(macOS)
+        24
+        #else
+        16
+        #endif
+    }
+
+    private var pageVerticalPadding: CGFloat {
+        #if os(macOS)
+        20
+        #else
+        16
+        #endif
+    }
+
+    private func usesDesktopLayout(width: CGFloat) -> Bool {
+        #if os(macOS)
+        width >= 760
+        #else
+        false
+        #endif
     }
 
     private func beginHistoryDateSelection(_ purpose: HistorySelectionPurpose) {

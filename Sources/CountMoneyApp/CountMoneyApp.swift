@@ -6,5 +6,8 @@ struct CountMoneyApp: App {
         WindowGroup {
             AppShellView()
         }
+        #if os(macOS)
+        .defaultSize(width: 1120, height: 760)
+        #endif
     }
 }

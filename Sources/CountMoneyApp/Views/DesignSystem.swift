@@ -85,9 +85,13 @@ extension View {
     }
 
     func tabBarScrollableContentInset() -> some View {
+        #if os(iOS)
         safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear.frame(height: AppLayout.tabBarScrollableContentInset)
         }
+        #else
+        self
+        #endif
     }
 
     func historyPull(enabled: Bool, onTrigger: @escaping () -> Void) -> some View {

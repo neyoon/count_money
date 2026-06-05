@@ -16,6 +16,39 @@ struct AppShellView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        shellContent
+            .tint(AppColor.primary)
+            .preferredColorScheme(store.appearance.colorScheme)
+            .installKeyboardDismissGesture()
+            .onAppear(perform: startShortcutDraftPolling)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    startShortcutDraftPolling()
+                }
+            }
+            .onDisappear {
+                shortcutDraftPollingTask?.cancel()
+            }
+            .alert("数据加载失败", isPresented: Binding(
+                get: { store.startupError != nil },
+                set: { if !$0 { store.startupError = nil } }
+            )) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(store.startupError ?? "")
+            }
+    }
+
+    @ViewBuilder
+    private var shellContent: some View {
+        #if os(macOS)
+        macShell
+        #else
+        phoneShell
+        #endif
+    }
+
+    private var phoneShell: some View {
         ZStack(alignment: .bottom) {
             AppColor.background
                 .ignoresSafeArea()
@@ -28,27 +61,35 @@ struct AppShellView: View {
 
             tabBarOverlay
         }
-        .tint(AppColor.primary)
-        .preferredColorScheme(store.appearance.colorScheme)
-        .installKeyboardDismissGesture()
-        .onAppear(perform: startShortcutDraftPolling)
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                startShortcutDraftPolling()
-            }
-        }
-        .onDisappear {
-            shortcutDraftPollingTask?.cancel()
-        }
-        .alert("数据加载失败", isPresented: Binding(
-            get: { store.startupError != nil },
-            set: { if !$0 { store.startupError = nil } }
-        )) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(store.startupError ?? "")
-        }
     }
+
+    #if os(macOS)
+    private var macShell: some View {
+        NavigationSplitView {
+            List {
+                ForEach(AppTab.mainTabs, id: \.self) { tab in
+                    Button {
+                        selectedTab = tab
+                    } label: {
+                        Label(tab.title, systemImage: tab.symbolName)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .foregroundStyle(selectedTab == tab ? AppColor.primary : AppColor.ink)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(
+                        selectedTab == tab ? AppColor.primary.opacity(0.12) : Color.clear
+                    )
+                }
+            }
+            .navigationTitle("Ledgerly")
+            .frame(minWidth: 190)
+        } detail: {
+            tabView(for: selectedTab)
+                .background(AppColor.background)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+    #endif
 
     private var tabBarOverlay: some View {
         PlatformTabBar(selectedTab: $selectedTab)
