@@ -21,6 +21,20 @@
 		A1000000000000000000000C /* Services/SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* Services/SQLiteDatabase.swift */; };
 		A1000000000000000000000D /* Services/QuickEntryShortcutStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001D /* Services/QuickEntryShortcutStore.swift */; };
 		A1000000000000000000000E /* Services/QuickEntryShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* Services/QuickEntryShortcuts.swift */; };
+		A10000000000000000000080 /* CountMoneyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* CountMoneyApp.swift */; };
+		A10000000000000000000081 /* Models/MoneyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* Models/MoneyModels.swift */; };
+		A10000000000000000000082 /* Models/PreviewData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* Models/PreviewData.swift */; };
+		A10000000000000000000083 /* Views/AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* Views/AppShellView.swift */; };
+		A10000000000000000000084 /* Views/DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* Views/DashboardView.swift */; };
+		A10000000000000000000085 /* Views/DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* Views/DesignSystem.swift */; };
+		A10000000000000000000086 /* Views/PlaceholderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Views/PlaceholderViews.swift */; };
+		A10000000000000000000087 /* Models/AppAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* Models/AppAppearance.swift */; };
+		A10000000000000000000088 /* Models/AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* Models/AppStore.swift */; };
+		A10000000000000000000089 /* Services/ScreenshotOCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* Services/ScreenshotOCRService.swift */; };
+		A1000000000000000000008A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* Assets.xcassets */; };
+		A1000000000000000000008B /* Services/SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* Services/SQLiteDatabase.swift */; };
+		A1000000000000000000008C /* Services/QuickEntryShortcutStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001D /* Services/QuickEntryShortcutStore.swift */; };
+		A1000000000000000000008D /* Services/QuickEntryShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* Services/QuickEntryShortcuts.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,10 +53,18 @@
 		A1000000000000000000001C /* Services/SQLiteDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SQLiteDatabase.swift; sourceTree = "<group>"; };
 		A1000000000000000000001D /* Services/QuickEntryShortcutStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickEntryShortcutStore.swift; sourceTree = "<group>"; };
 		A1000000000000000000001E /* Services/QuickEntryShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/QuickEntryShortcuts.swift; sourceTree = "<group>"; };
+		A1000000000000000000001F /* CountMoney.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CountMoney.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A10000000000000000000031 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000091 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -85,6 +107,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000010 /* CountMoney.app */,
+				A1000000000000000000001F /* CountMoney.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -111,6 +134,25 @@
 			productReference = A10000000000000000000010 /* CountMoney.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A10000000000000000000093 /* CountMoneyMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000094 /* Build configuration list for PBXNativeTarget "CountMoneyMac" */;
+			buildPhases = (
+				A10000000000000000000090 /* Sources */,
+				A10000000000000000000091 /* Frameworks */,
+				A10000000000000000000092 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CountMoneyMac;
+			packageProductDependencies = (
+			);
+			productName = CountMoney;
+			productReference = A1000000000000000000001F /* CountMoney.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -122,6 +164,9 @@
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					A10000000000000000000040 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					A10000000000000000000093 = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
@@ -142,6 +187,7 @@
 			projectRoot = "";
 			targets = (
 				A10000000000000000000040 /* CountMoney */,
+				A10000000000000000000093 /* CountMoneyMac */,
 			);
 		};
 /* End PBXProject section */
@@ -152,6 +198,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000000000000000000000B /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000092 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000000000008A /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -175,6 +229,26 @@
 				A1000000000000000000000C /* Services/SQLiteDatabase.swift in Sources */,
 				A1000000000000000000000D /* Services/QuickEntryShortcutStore.swift in Sources */,
 				A1000000000000000000000E /* Services/QuickEntryShortcuts.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000090 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000080 /* CountMoneyApp.swift in Sources */,
+				A10000000000000000000081 /* Models/MoneyModels.swift in Sources */,
+				A10000000000000000000082 /* Models/PreviewData.swift in Sources */,
+				A10000000000000000000083 /* Views/AppShellView.swift in Sources */,
+				A10000000000000000000084 /* Views/DashboardView.swift in Sources */,
+				A10000000000000000000085 /* Views/DesignSystem.swift in Sources */,
+				A10000000000000000000086 /* Views/PlaceholderViews.swift in Sources */,
+				A10000000000000000000087 /* Models/AppAppearance.swift in Sources */,
+				A10000000000000000000088 /* Models/AppStore.swift in Sources */,
+				A10000000000000000000089 /* Services/ScreenshotOCRService.swift in Sources */,
+				A1000000000000000000008B /* Services/SQLiteDatabase.swift in Sources */,
+				A1000000000000000000008C /* Services/QuickEntryShortcutStore.swift in Sources */,
+				A1000000000000000000008D /* Services/QuickEntryShortcuts.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -362,6 +436,66 @@
 			};
 			name = Release;
 		};
+		A10000000000000000000095 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Ledgerly;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = "-lsqlite3";
+				PRODUCT_BUNDLE_IDENTIFIER = com.guanxingjian.CountMoney.mac;
+				PRODUCT_NAME = CountMoney;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000096 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Ledgerly;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = "-lsqlite3";
+				PRODUCT_BUNDLE_IDENTIFIER = com.guanxingjian.CountMoney.mac;
+				PRODUCT_NAME = CountMoney;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -379,6 +513,15 @@
 			buildConfigurations = (
 				A10000000000000000000062 /* Debug */,
 				A10000000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000094 /* Build configuration list for PBXNativeTarget "CountMoneyMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000095 /* Debug */,
+				A10000000000000000000096 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
