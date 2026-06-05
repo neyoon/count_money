@@ -263,6 +263,30 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertFalse(store.overview.recentTransactions.contains { $0.id == transaction.id })
     }
 
+    func testRecentOverviewKeepsTenTransactions() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 6, day: 5, hour: 12))!
+        let debit = asset(name: "借记卡", kind: .debitCard, balance: 0)
+        let food = category(name: "餐饮", kind: .expense, presetKey: "expense_food")
+        let transactions = (0..<12).map { index in
+            var transaction = transaction(
+                kind: .expense,
+                title: "账目 \(index)",
+                category: food,
+                asset: debit,
+                amount: Decimal(index + 1)
+            )
+            transaction.occurredAt = calendar.date(byAdding: .minute, value: -index, to: now)!
+            return transaction
+        }
+
+        let overview = MonthlyOverview(transactions: transactions, calendar: calendar, now: now)
+
+        XCTAssertEqual(overview.recentTransactions.count, 10)
+        XCTAssertEqual(overview.recentTransactions.first?.title, "账目 0")
+        XCTAssertEqual(overview.recentTransactions.last?.title, "账目 9")
+    }
+
     func testAddingTransactionKeepsProvidedDate() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")

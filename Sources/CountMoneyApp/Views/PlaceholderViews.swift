@@ -406,12 +406,10 @@ struct EntryView: View {
                 Text("记账日期")
                     .font(.headline)
                 Spacer()
-                if let entryDateText {
-                    Text(entryDateText)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
+                Text(entryDateText)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
@@ -420,9 +418,9 @@ struct EntryView: View {
         .tint(AppColor.primary)
     }
 
-    private var entryDateText: String? {
+    private var entryDateText: String {
         if Calendar.current.isDateInToday(entryDate) {
-            return nil
+            return "今天"
         }
 
         let formatter = DateFormatter()
@@ -1394,6 +1392,24 @@ struct RecentTransactionsSection: View {
     var transactions: [MoneyTransaction]
     @Binding var message: String?
 
+    private var groupedTransactions: [RecentTransactionDateGroup] {
+        let calendar = Calendar.current
+        let groups = Dictionary(grouping: transactions) {
+            calendar.startOfDay(for: $0.occurredAt)
+        }
+
+        return groups.keys.sorted(by: >).map { date in
+            RecentTransactionDateGroup(
+                date: date,
+                transactions: (groups[date] ?? []).sorted { $0.occurredAt > $1.occurredAt }
+            )
+        }
+    }
+
+    private var shouldShowDateGroups: Bool {
+        groupedTransactions.count > 1
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("最近账目")
@@ -1406,23 +1422,67 @@ struct RecentTransactionsSection: View {
                     .foregroundStyle(AppColor.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(transactions) { transaction in
-                        EditableTransactionRow(
-                            store: store,
-                            transaction: transaction,
-                            message: $message
-                        )
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(groupedTransactions) { group in
+                        VStack(alignment: .leading, spacing: 0) {
+                            if shouldShowDateGroups {
+                                RecentTransactionDateHeader(date: group.date)
+                                    .padding(.bottom, 4)
+                            }
 
-                        if transaction.id != transactions.last?.id {
-                            Divider()
-                                .padding(.leading, 52)
+                            ForEach(group.transactions) { transaction in
+                                EditableTransactionRow(
+                                    store: store,
+                                    transaction: transaction,
+                                    message: $message
+                                )
+
+                                if transaction.id != group.transactions.last?.id {
+                                    Divider()
+                                        .padding(.leading, 52)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
         .surface()
+    }
+}
+
+private struct RecentTransactionDateGroup: Identifiable {
+    var date: Date
+    var transactions: [MoneyTransaction]
+
+    var id: Date {
+        date
+    }
+}
+
+private struct RecentTransactionDateHeader: View {
+    var date: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Self.text(for: date))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppColor.muted)
+
+            Rectangle()
+                .fill(AppColor.line)
+                .frame(height: 1)
+        }
+    }
+
+    private static func text(for date: Date) -> String {
+        if Calendar.current.isDateInToday(date) {
+            return "今天"
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy 年 M 月 d 日"
+        return formatter.string(from: date)
     }
 }
 

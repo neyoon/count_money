@@ -424,7 +424,7 @@ struct MonthlyOverview {
         self.categorySpending = MonthlyOverview.makeCategorySpending(from: expenseTransactions)
         self.recentTransactions = monthTransactions
             .sorted { $0.occurredAt > $1.occurredAt }
-            .prefix(5)
+            .prefix(10)
             .map { $0 }
     }
 
