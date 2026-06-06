@@ -226,7 +226,9 @@ final class AppStore {
         nextTransactions.append(transaction)
         nextTransactions.sort { $0.occurredAt > $1.occurredAt }
 
-        if transaction.repaymentAdjustments.isEmpty {
+        if transaction.repaymentAdjustments.isEmpty
+            && !transaction.category.isFundPurchase
+            && !transaction.category.isFundRedemption {
             try persistTransactions(nextTransactions)
         } else {
             try persistLedger(transactions: nextTransactions, assets: nextAssets)
@@ -254,7 +256,7 @@ final class AppStore {
 
         var nextAssets = assets
         nextTransactions.removeAll { $0.id == original.id }
-        _ = reverseRepaymentEffects(for: original, in: &nextAssets)
+        _ = reverseAssetEffects(for: original, in: &nextAssets)
 
         let updatedTransaction = makeTransaction(
             id: original.id,
@@ -282,7 +284,7 @@ final class AppStore {
         var nextAssets = assets
         nextTransactions.removeAll { $0.id == transaction.id }
 
-        let changedAssets = reverseRepaymentEffects(for: transaction, in: &nextAssets)
+        let changedAssets = reverseAssetEffects(for: transaction, in: &nextAssets)
         if changedAssets {
             try persistLedger(transactions: nextTransactions, assets: nextAssets)
             assets = nextAssets
@@ -313,7 +315,7 @@ final class AppStore {
     }
 
     func deleteAsset(_ asset: AssetItem) throws {
-        guard !transactions.contains(where: { $0.account.id == asset.id }) else {
+        guard !transactions.contains(where: { $0.account.id == asset.id || $0.paymentAccount?.id == asset.id }) else {
             throw AppStoreFailure.assetInUse(asset.name)
         }
 
@@ -907,7 +909,7 @@ final class AppStore {
         }
 
         for transaction in transactions where transaction.occurredAt > cutoff {
-            _ = reverseRepaymentEffects(for: transaction, in: &snapshotAssets)
+            _ = reverseAssetEffects(for: transaction, in: &snapshotAssets)
         }
 
         return LedgerCalculator.assetsWithLedgerBalances(
@@ -968,6 +970,9 @@ final class AppStore {
         let appliesRepayment = kind == .expense
             && category.isRepayment
             && (accountKind?.isDebtAccount ?? false)
+        let appliesFundPurchase = kind == .expense
+            && category.isFundPurchase
+            && accountKind == .fund
 
         var repaymentAdjustments: [RepaymentAdjustment] = []
         if usesInstallmentPlan, let installmentMonths {
@@ -979,6 +984,12 @@ final class AppStore {
         if appliesRepayment {
             repaymentAdjustments = applyRepayment(to: &assets, accountID: account.id, amount: amount)
         }
+        if appliesFundPurchase {
+            applyFundPurchase(to: &assets, accountID: account.id, amount: amount)
+        }
+        if category.isFundRedemption, let paymentAccount {
+            applyFundRedemption(to: &assets, accountID: paymentAccount.id, amount: amount)
+        }
 
         return MoneyTransaction(
             id: id,
@@ -986,7 +997,7 @@ final class AppStore {
             title: title,
             category: category,
             account: account,
-            paymentAccount: category.isRepayment ? paymentAccount : nil,
+            paymentAccount: category.isRepayment || category.isFundPurchase || category.isFundRedemption ? paymentAccount : nil,
             amount: amount,
             installmentMonths: usesInstallmentPlan ? installmentMonths : nil,
             repaymentAdjustments: repaymentAdjustments,
@@ -1054,6 +1065,52 @@ final class AppStore {
         }
 
         return adjustments
+    }
+
+    private func applyFundPurchase(to assets: inout [AssetItem], accountID: UUID, amount: Decimal) {
+        guard let assetIndex = assets.firstIndex(where: { $0.id == accountID }),
+              assets[assetIndex].kind == .fund
+        else {
+            return
+        }
+
+        assets[assetIndex].fundCost = (assets[assetIndex].fundCost ?? 0) + amount
+        assets[assetIndex].fundMarketValue = (assets[assetIndex].fundMarketValue ?? 0) + amount
+        assets[assetIndex].balance = assets[assetIndex].fundCurrentValue
+    }
+
+    private func applyFundRedemption(to assets: inout [AssetItem], accountID: UUID, amount: Decimal) {
+        guard let assetIndex = assets.firstIndex(where: { $0.id == accountID }),
+              assets[assetIndex].kind == .fund
+        else {
+            return
+        }
+
+        assets[assetIndex].fundCost = (assets[assetIndex].fundCost ?? 0) - amount
+        assets[assetIndex].fundMarketValue = (assets[assetIndex].fundMarketValue ?? 0) - amount
+        assets[assetIndex].balance = assets[assetIndex].fundCurrentValue
+    }
+
+    private func reverseAssetEffects(for transaction: MoneyTransaction, in assets: inout [AssetItem]) -> Bool {
+        let changedRepayment = reverseRepaymentEffects(for: transaction, in: &assets)
+        let changedFund = reverseFundEffects(for: transaction, in: &assets)
+        return changedRepayment || changedFund
+    }
+
+    private func reverseFundEffects(for transaction: MoneyTransaction, in assets: inout [AssetItem]) -> Bool {
+        if transaction.kind == .expense, transaction.category.isFundPurchase {
+            applyFundRedemption(to: &assets, accountID: transaction.account.id, amount: transaction.amount)
+            return true
+        }
+
+        if transaction.kind == .income,
+           transaction.category.isFundRedemption,
+           let fundAccount = transaction.paymentAccount {
+            applyFundPurchase(to: &assets, accountID: fundAccount.id, amount: transaction.amount)
+            return true
+        }
+
+        return false
     }
 
     private func reverseRepaymentEffects(for transaction: MoneyTransaction, in assets: inout [AssetItem]) -> Bool {
@@ -1126,9 +1183,22 @@ final class AppStore {
     }
 
     private func ensureRecommendedCategories() throws {
-        guard !expenseCategories.contains(where: \.isRepayment) else { return }
-        expenseCategories.append(.repayment)
+        var changed = false
+        if !expenseCategories.contains(where: \.isRepayment) {
+            expenseCategories.append(.repayment)
+            changed = true
+        }
+        if !expenseCategories.contains(where: \.isFundPurchase) {
+            expenseCategories.append(.fundPurchase)
+            changed = true
+        }
+        if !incomeCategories.contains(where: \.isFundRedemption) {
+            incomeCategories.append(.fundRedemption)
+            changed = true
+        }
+        guard changed else { return }
         expenseCategories.sort { $0.sortOrder < $1.sortOrder }
+        incomeCategories.sort { $0.sortOrder < $1.sortOrder }
         try persistCategories(expenseCategories + incomeCategories)
     }
 

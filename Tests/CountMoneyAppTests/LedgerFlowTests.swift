@@ -706,6 +706,88 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(store.expenseCategories.contains(where: \.isRepayment))
     }
 
+    func testFundPurchaseCountsAsExpenseAndMovesCashIntoFund() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        let fund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+        let fundAccount = MoneyAccount(
+            id: fund.id,
+            name: fund.name,
+            symbolName: fund.kind.symbolName,
+            balance: fund.fundCurrentValue
+        )
+        let purchase = try XCTUnwrap(store.expenseCategories.first(where: \.isFundPurchase))
+
+        try store.addTransaction(
+            kind: .expense,
+            amount: 300,
+            category: purchase,
+            account: fundAccount,
+            title: "购买基金",
+            paymentAccount: debit
+        )
+
+        let updatedFund = try XCTUnwrap(store.ledgerAssets.first { $0.id == fund.id })
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, -300)
+        XCTAssertEqual(updatedFund.fundCost, 300)
+        XCTAssertEqual(updatedFund.fundCurrentValue, 300)
+        XCTAssertEqual(store.overview.expense, 300)
+        XCTAssertTrue(store.transactions.contains {
+            $0.category.isFundPurchase
+                && $0.account.id == fund.id
+                && $0.paymentAccount?.id == debit.id
+        })
+    }
+
+    func testFundRedemptionCountsAsIncomeAndMovesFundIntoCash() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let debit = try XCTUnwrap(store.paymentAccounts.first { $0.name == "借记卡" })
+        var fund = try XCTUnwrap(store.assets.first { $0.kind == .fund })
+        fund.fundCost = 500
+        fund.fundMarketValue = 500
+        fund.balance = fund.fundCurrentValue
+        try store.updateAsset(fund)
+        let fundAccount = MoneyAccount(
+            id: fund.id,
+            name: fund.name,
+            symbolName: fund.kind.symbolName,
+            balance: fund.fundCurrentValue
+        )
+        let redemption = try XCTUnwrap(store.incomeCategories.first(where: \.isFundRedemption))
+
+        try store.addTransaction(
+            kind: .income,
+            amount: 200,
+            category: redemption,
+            account: debit,
+            title: "基金赎回",
+            paymentAccount: fundAccount
+        )
+
+        let updatedFund = try XCTUnwrap(store.ledgerAssets.first { $0.id == fund.id })
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, 200)
+        XCTAssertEqual(updatedFund.fundCost, 300)
+        XCTAssertEqual(updatedFund.fundCurrentValue, 300)
+        XCTAssertEqual(store.overview.income, 200)
+        XCTAssertTrue(store.transactions.contains {
+            $0.category.isFundRedemption
+                && $0.account.id == debit.id
+                && $0.paymentAccount?.id == fund.id
+        })
+    }
+
     private func transaction(
         kind: TransactionKind,
         title: String,

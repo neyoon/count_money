@@ -24,6 +24,7 @@ enum PreviewData {
             isSystemPreset: true
         ),
         .repayment,
+        .fundPurchase,
         MoneyCategory(
             id: UUID(),
             presetKey: "expense_daily",
@@ -147,6 +148,7 @@ enum PreviewData {
             sortOrder: 40,
             isSystemPreset: true
         ),
+        .fundRedemption,
         MoneyCategory(
             id: UUID(),
             presetKey: "income_interest",

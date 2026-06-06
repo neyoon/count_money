@@ -251,8 +251,38 @@ extension MoneyCategory {
         isSystemPreset: true
     )
 
+    static let fundPurchase = MoneyCategory(
+        id: UUID(uuidString: "43BD6B55-FEBB-46FD-A94E-B9A44DE697D4")!,
+        presetKey: "expense_fund_purchase",
+        name: "购买基金",
+        kind: .expense,
+        symbolName: "chart.line.uptrend.xyaxis",
+        color: AppColor.success,
+        sortOrder: 27,
+        isSystemPreset: true
+    )
+
+    static let fundRedemption = MoneyCategory(
+        id: UUID(uuidString: "B28C9E31-A5A0-4A9D-B588-2F9045141D58")!,
+        presetKey: "income_fund_redemption",
+        name: "基金赎回",
+        kind: .income,
+        symbolName: "arrow.down.left.circle.fill",
+        color: AppColor.success,
+        sortOrder: 45,
+        isSystemPreset: true
+    )
+
     var isRepayment: Bool {
         presetKey == Self.repayment.presetKey
+    }
+
+    var isFundPurchase: Bool {
+        presetKey == Self.fundPurchase.presetKey
+    }
+
+    var isFundRedemption: Bool {
+        presetKey == Self.fundRedemption.presetKey
     }
 }
 
@@ -389,6 +419,20 @@ enum LedgerCalculator {
             guard balances[transaction.account.id] != nil,
                   let assetKind = assetKinds[transaction.account.id]
             else {
+                continue
+            }
+
+            if transaction.kind == .expense,
+               transaction.category.isFundPurchase,
+               let paymentAccount = transaction.paymentAccount,
+               balances[paymentAccount.id] != nil,
+               let paymentAssetKind = assetKinds[paymentAccount.id] {
+                applyExpense(
+                    amount: transaction.amount,
+                    accountID: paymentAccount.id,
+                    assetKind: paymentAssetKind,
+                    balances: &balances
+                )
                 continue
             }
 

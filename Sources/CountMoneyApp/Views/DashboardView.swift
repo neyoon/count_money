@@ -770,9 +770,14 @@ struct TransactionRow: View {
     }
 
     private var accountText: String {
-        if transaction.category.isRepayment,
+        if (transaction.category.isRepayment || transaction.category.isFundPurchase),
            let paymentAccount = transaction.paymentAccount {
             return "\(paymentAccount.name) -> \(transaction.account.name)"
+        }
+
+        if transaction.category.isFundRedemption,
+           let fundAccount = transaction.paymentAccount {
+            return "\(fundAccount.name) -> \(transaction.account.name)"
         }
 
         return transaction.account.name
