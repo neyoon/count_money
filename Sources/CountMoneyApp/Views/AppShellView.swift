@@ -6,12 +6,9 @@ import UIKit
 struct AppShellView: View {
     private let tabBarHeight: CGFloat = 56
     private let bottomContentInset: CGFloat = 96
-    private let pageSwipeMinimumDistance: CGFloat = 28
-    private let pageSwipeCommitDistance: CGFloat = 84
 
     @State private var store = AppStore()
     @State private var selectedTab: AppTab = .home
-    @State private var dragOffset: CGFloat = 0
     @State private var shortcutDraftPollingTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -110,56 +107,10 @@ struct AppShellView: View {
                         .clipped()
                 }
             }
-            .offset(x: -CGFloat(selectedTabIndex) * geometry.size.width + dragOffset)
+            .offset(x: -CGFloat(selectedTabIndex) * geometry.size.width)
             .animation(.snappy, value: selectedTab)
             .clipped()
-            .contentShape(Rectangle())
-            .simultaneousGesture(pageSwipeGesture, including: .gesture)
         }
-    }
-
-    private var pageSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: pageSwipeMinimumDistance)
-            .onChanged { value in
-                let width = value.translation.width
-                let height = value.translation.height
-                guard abs(width) > abs(height) else {
-                    return
-                }
-                guard !isBlockedBoundarySwipe(width: width) else {
-                    dragOffset = 0
-                    return
-                }
-
-                dragOffset = width
-            }
-            .onEnded { value in
-                let width = value.translation.width
-                let height = value.translation.height
-                guard !isBlockedBoundarySwipe(width: width) else {
-                    resetDragOffset()
-                    return
-                }
-                guard abs(width) > abs(height) * 1.4, abs(width) > pageSwipeCommitDistance else {
-                    resetDragOffset()
-                    return
-                }
-                if width < 0 {
-                    moveToAdjacentTab(offset: 1)
-                } else {
-                    moveToAdjacentTab(offset: -1)
-                }
-            }
-    }
-
-    private func isBlockedBoundarySwipe(width: CGFloat) -> Bool {
-        if selectedTabIndex == AppTab.mainTabs.startIndex, width > 0 {
-            return true
-        }
-        if selectedTabIndex == AppTab.mainTabs.index(before: AppTab.mainTabs.endIndex), width < 0 {
-            return true
-        }
-        return false
     }
 
     @ViewBuilder
@@ -175,30 +126,6 @@ struct AppShellView: View {
             AccountsView(store: store, isActive: selectedTab == .accounts)
         case .settings:
             SettingsView(store: store)
-        }
-    }
-
-    private func moveToAdjacentTab(offset: Int) {
-        guard let index = AppTab.mainTabs.firstIndex(of: selectedTab) else {
-            resetDragOffset()
-            return
-        }
-
-        let nextIndex = index + offset
-        guard AppTab.mainTabs.indices.contains(nextIndex) else {
-            resetDragOffset()
-            return
-        }
-
-        withAnimation(.snappy) {
-            selectedTab = AppTab.mainTabs[nextIndex]
-            dragOffset = 0
-        }
-    }
-
-    private func resetDragOffset() {
-        withAnimation(.snappy) {
-            dragOffset = 0
         }
     }
 

@@ -966,6 +966,7 @@ struct TransactionDateDetailView: View {
     var store: AppStore
     var date: Date
     @State private var message: String?
+    @State private var revealedTransactionID: UUID?
 
     private var sortedTransactions: [MoneyTransaction] {
         let calendar = Calendar.current
@@ -980,7 +981,8 @@ struct TransactionDateDetailView: View {
                 EditableTransactionRow(
                     store: store,
                     transaction: transaction,
-                    message: $message
+                    message: $message,
+                    revealedTransactionID: $revealedTransactionID
                 )
             }
         }
@@ -1005,31 +1007,126 @@ struct TransactionDateDetailView: View {
 }
 
 private struct EditableTransactionRow: View {
+    private let actionSize: CGFloat = 44
+    private let actionSpacing: CGFloat = 10
+
     var store: AppStore
     var transaction: MoneyTransaction
     @Binding var message: String?
+    @Binding var revealedTransactionID: UUID?
     @State private var transactionBeingEdited: MoneyTransaction?
+    @State private var rowOffset: CGFloat = 0
+    @State private var dragStartOffset: CGFloat?
+
+    private var actionsWidth: CGFloat {
+        actionSize * 2 + actionSpacing * 3
+    }
 
     var body: some View {
-        TransactionRow(transaction: transaction)
-            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                Button(role: .destructive) {
-                    deleteTransaction()
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .tint(.red)
-
-                Button {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: actionSpacing) {
+                rowActionButton(
+                    symbolName: "pencil",
+                    background: AppColor.primary
+                ) {
+                    closeActions()
                     transactionBeingEdited = transaction
-                } label: {
-                    Image(systemName: "pencil.circle")
                 }
-                .tint(AppColor.primary)
+
+                rowActionButton(
+                    symbolName: "trash",
+                    background: AppColor.danger
+                ) {
+                    closeActions()
+                    deleteTransaction()
+                }
             }
-            .sheet(item: $transactionBeingEdited) { transaction in
-                TransactionEditView(store: store, transaction: transaction)
+            .padding(.horizontal, actionSpacing)
+            .frame(width: actionsWidth)
+
+            TransactionRow(transaction: transaction)
+                .background(AppColor.surface)
+                .offset(x: rowOffset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if rowOffset != 0 {
+                        closeActions()
+                    }
+                }
+                .simultaneousGesture(rowSwipeGesture)
+        }
+        .clipped()
+        .animation(.snappy, value: rowOffset)
+        .onChange(of: revealedTransactionID) { _, newValue in
+            if newValue != transaction.id {
+                closeActions()
             }
+        }
+        .sheet(item: $transactionBeingEdited) { transaction in
+            TransactionEditView(store: store, transaction: transaction)
+        }
+    }
+
+    private func rowActionButton(
+        symbolName: String,
+        background: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbolName)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: actionSize, height: actionSize)
+                .background(background)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var rowSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.2 else {
+                    return
+                }
+
+                if dragStartOffset == nil {
+                    dragStartOffset = rowOffset
+                }
+
+                let proposedOffset = (dragStartOffset ?? rowOffset) + value.translation.width
+                rowOffset = min(0, max(-actionsWidth, proposedOffset))
+            }
+            .onEnded { value in
+                defer {
+                    dragStartOffset = nil
+                }
+
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.2 else {
+                    closeActions()
+                    return
+                }
+
+                let shouldOpen = rowOffset < -actionsWidth * 0.42
+                    || value.predictedEndTranslation.width < -actionsWidth
+                if shouldOpen {
+                    revealActions()
+                } else {
+                    closeActions()
+                }
+            }
+    }
+
+    private func revealActions() {
+        revealedTransactionID = transaction.id
+        rowOffset = -actionsWidth
+    }
+
+    private func closeActions() {
+        rowOffset = 0
+        if revealedTransactionID == transaction.id {
+            revealedTransactionID = nil
+        }
     }
 
     private func deleteTransaction() {
@@ -1524,6 +1621,7 @@ struct RecentTransactionsSection: View {
     var store: AppStore
     var transactions: [MoneyTransaction]
     @Binding var message: String?
+    @State private var revealedTransactionID: UUID?
 
     private var groupedTransactions: [RecentTransactionDateGroup] {
         let calendar = Calendar.current
@@ -1567,7 +1665,8 @@ struct RecentTransactionsSection: View {
                                 EditableTransactionRow(
                                     store: store,
                                     transaction: transaction,
-                                    message: $message
+                                    message: $message,
+                                    revealedTransactionID: $revealedTransactionID
                                 )
 
                                 if transaction.id != group.transactions.last?.id {
