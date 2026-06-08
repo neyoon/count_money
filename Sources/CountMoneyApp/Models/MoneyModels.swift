@@ -508,6 +508,7 @@ struct MonthlyOverview: Hashable {
     var income: Decimal
     var expense: Decimal
     var dailyCashflows: [DailyCashflow]
+    var categoryIncome: [CategorySpending]
     var categorySpending: [CategorySpending]
     var recentTransactions: [MoneyTransaction]
 
@@ -535,6 +536,7 @@ struct MonthlyOverview: Hashable {
             calendar: calendar,
             now: now
         )
+        self.categoryIncome = MonthlyOverview.makeCategorySpending(from: incomeTransactions)
         self.categorySpending = MonthlyOverview.makeCategorySpending(from: expenseTransactions)
         self.recentTransactions = monthTransactions
             .sorted { $0.occurredAt > $1.occurredAt }

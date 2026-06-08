@@ -662,12 +662,23 @@ struct TransactionsView: View {
     @State private var selectedYear = Calendar.current.component(.year, from: Date())
     @State private var selectedMonth = Calendar.current.component(.month, from: Date())
 
-    private var sortedTransactions: [MoneyTransaction] {
-        store.transactions.sorted { $0.occurredAt > $1.occurredAt }
-    }
+    private var transactionData: TransactionsViewData {
+        let calendar = Calendar.current
+        let now = Date()
+        let cutoff = calendar.endOfDay(for: now)
+        let sortedTransactions = store.transactions.sorted { $0.occurredAt > $1.occurredAt }
+        let recentTransactions = sortedTransactions
+            .filter {
+                calendar.isDate($0.occurredAt, equalTo: now, toGranularity: .month)
+                    && $0.occurredAt <= cutoff
+            }
+            .prefix(10)
+            .map { $0 }
 
-    private var recentTransactions: [MoneyTransaction] {
-        store.overview.recentTransactions
+        return TransactionsViewData(
+            sortedTransactions: sortedTransactions,
+            recentTransactions: recentTransactions
+        )
     }
 
     private var availableYears: [Int] {
@@ -679,12 +690,14 @@ struct TransactionsView: View {
     }
 
     var body: some View {
+        let data = transactionData
+
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     MonthTransactionCalendarView(
                         store: store,
-                        transactions: sortedTransactions,
+                        transactions: data.sortedTransactions,
                         selectedYear: $selectedYear,
                         selectedMonth: $selectedMonth,
                         availableYears: availableYears,
@@ -693,7 +706,7 @@ struct TransactionsView: View {
 
                     RecentTransactionsSection(
                         store: store,
-                        transactions: recentTransactions,
+                        transactions: data.recentTransactions,
                         message: $message
                     )
                 }
@@ -727,6 +740,11 @@ struct TransactionsView: View {
         selectedMonth = calendar.component(.month, from: Date())
     }
 
+}
+
+private struct TransactionsViewData {
+    var sortedTransactions: [MoneyTransaction]
+    var recentTransactions: [MoneyTransaction]
 }
 
 struct MonthTransactionCalendarView: View {
@@ -967,25 +985,31 @@ struct TransactionDateDetailView: View {
     var date: Date
     @State private var message: String?
 
-    private var sortedTransactions: [MoneyTransaction] {
+    private var transactionData: TransactionDateDetailData {
         let calendar = Calendar.current
-        return store.transactions
-            .filter { calendar.isDate($0.occurredAt, inSameDayAs: date) }
-            .sorted { $0.occurredAt > $1.occurredAt }
-    }
+        var dailyBalanceChange: Decimal = 0
+        var transactions: [MoneyTransaction] = []
 
-    private var dailyBalanceChange: Decimal {
-        sortedTransactions.reduce(0) { total, transaction in
+        for transaction in store.transactions where calendar.isDate(transaction.occurredAt, inSameDayAs: date) {
             switch transaction.kind {
             case .expense:
-                total - transaction.amount
+                dailyBalanceChange -= transaction.amount
             case .income, .fundProfit:
-                total + transaction.amount
+                dailyBalanceChange += transaction.amount
             }
+
+            transactions.append(transaction)
         }
+
+        return TransactionDateDetailData(
+            transactions: transactions.sorted { $0.occurredAt > $1.occurredAt },
+            dailyBalanceChange: dailyBalanceChange
+        )
     }
 
     var body: some View {
+        let data = transactionData
+
         List {
             HStack {
                 Text("余额变动")
@@ -994,13 +1018,13 @@ struct TransactionDateDetailView: View {
 
                 Spacer()
 
-                Text(MoneyFormat.yuan(dailyBalanceChange, signed: dailyBalanceChange > 0))
+                Text(MoneyFormat.yuan(data.dailyBalanceChange, signed: data.dailyBalanceChange > 0))
                     .font(.headline.weight(.semibold))
-                    .foregroundStyle(dailyBalanceChange < 0 ? AppColor.danger : AppColor.success)
+                    .foregroundStyle(data.dailyBalanceChange < 0 ? AppColor.danger : AppColor.success)
             }
             .padding(.vertical, 8)
 
-            ForEach(sortedTransactions) { transaction in
+            ForEach(data.transactions) { transaction in
                 EditableTransactionRow(
                     store: store,
                     transaction: transaction,
@@ -1028,6 +1052,11 @@ struct TransactionDateDetailView: View {
         formatter.dateFormat = "M 月 d 日 EEEE"
         return formatter.string(from: date)
     }
+}
+
+private struct TransactionDateDetailData {
+    var transactions: [MoneyTransaction]
+    var dailyBalanceChange: Decimal
 }
 
 private struct EditableTransactionRow: View {
@@ -1096,6 +1125,17 @@ private struct EditableTransactionRow: View {
 
     private var slideRevealRow: some View {
         ZStack(alignment: .trailing) {
+            TransactionRow(transaction: transaction)
+                .background(AppColor.surface)
+                .offset(x: rowOffset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if rowOffset != 0 {
+                        closeActions()
+                    }
+                }
+                .simultaneousGesture(rowSwipeGesture)
+
             HStack(spacing: slideActionSpacing) {
                 slideActionButton(
                     symbolName: "pencil",
@@ -1115,17 +1155,8 @@ private struct EditableTransactionRow: View {
             }
             .padding(.horizontal, slideActionSpacing)
             .frame(width: slideActionsWidth)
-
-            TransactionRow(transaction: transaction)
-                .background(AppColor.surface)
-                .offset(x: rowOffset)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if rowOffset != 0 {
-                        closeActions()
-                    }
-                }
-                .simultaneousGesture(rowSwipeGesture)
+            .offset(x: slideActionsWidth + rowOffset)
+            .allowsHitTesting(rowOffset != 0)
         }
         .clipped()
         .animation(.snappy, value: rowOffset)

@@ -99,14 +99,14 @@ struct DashboardView: View {
                     weeklyChart
                         .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                    categoryChart
+                    categoryCharts
                         .frame(width: 360, alignment: .top)
                 }
             } else {
                 hero
                 metrics
                 weeklyChart
-                categoryChart
+                categoryCharts
             }
         }
     }
@@ -256,12 +256,26 @@ struct DashboardView: View {
             .reduce(0, +)
     }
 
-    private var categoryChart: some View {
+    private var categoryCharts: some View {
+        VStack(spacing: 16) {
+            categoryChart(
+                title: "收入分类占比",
+                items: overview.categoryIncome
+            )
+
+            categoryChart(
+                title: "支出分类占比",
+                items: overview.categorySpending
+            )
+        }
+    }
+
+    private func categoryChart(title: String, items: [CategorySpending]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "支出分类占比", value: "本月")
+            SectionHeader(title: title, value: "本月")
 
             HStack(spacing: 16) {
-                Chart(overview.categorySpending) { item in
+                Chart(items) { item in
                     SectorMark(
                         angle: .value("金额", item.amount.doubleValue),
                         innerRadius: .ratio(0.58),
@@ -273,7 +287,7 @@ struct DashboardView: View {
                 .frame(width: 150, height: 150)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(overview.categorySpending) { item in
+                    ForEach(items) { item in
                         CategoryLegendRow(item: item)
                     }
                 }
