@@ -70,7 +70,9 @@ struct AppShellView: View {
                     } label: {
                         Label(tab.title, systemImage: tab.symbolName)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
                             .foregroundStyle(selectedTab == tab ? AppColor.primary : AppColor.ink)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .listRowBackground(

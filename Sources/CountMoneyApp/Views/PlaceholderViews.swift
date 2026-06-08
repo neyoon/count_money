@@ -966,7 +966,6 @@ struct TransactionDateDetailView: View {
     var store: AppStore
     var date: Date
     @State private var message: String?
-    @State private var revealedTransactionID: UUID?
 
     private var sortedTransactions: [MoneyTransaction] {
         let calendar = Calendar.current
@@ -975,14 +974,39 @@ struct TransactionDateDetailView: View {
             .sorted { $0.occurredAt > $1.occurredAt }
     }
 
+    private var dailyBalanceChange: Decimal {
+        sortedTransactions.reduce(0) { total, transaction in
+            switch transaction.kind {
+            case .expense:
+                total - transaction.amount
+            case .income, .fundProfit:
+                total + transaction.amount
+            }
+        }
+    }
+
     var body: some View {
         List {
+            HStack {
+                Text("余额变动")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
+
+                Spacer()
+
+                Text(MoneyFormat.yuan(dailyBalanceChange, signed: dailyBalanceChange > 0))
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(dailyBalanceChange < 0 ? AppColor.danger : AppColor.success)
+            }
+            .padding(.vertical, 8)
+
             ForEach(sortedTransactions) { transaction in
                 EditableTransactionRow(
                     store: store,
                     transaction: transaction,
                     message: $message,
-                    revealedTransactionID: $revealedTransactionID
+                    iOSInteractionStyle: .listSwipe,
+                    revealedTransactionID: .constant(nil)
                 )
             }
         }
@@ -1007,25 +1031,73 @@ struct TransactionDateDetailView: View {
 }
 
 private struct EditableTransactionRow: View {
-    private let actionSize: CGFloat = 44
-    private let actionSpacing: CGFloat = 10
-
     var store: AppStore
     var transaction: MoneyTransaction
     @Binding var message: String?
+    var iOSInteractionStyle: TransactionRowInteractionStyle
     @Binding var revealedTransactionID: UUID?
     @State private var transactionBeingEdited: MoneyTransaction?
     @State private var rowOffset: CGFloat = 0
     @State private var dragStartOffset: CGFloat?
 
-    private var actionsWidth: CGFloat {
-        actionSize * 2 + actionSpacing * 3
+    private let macActionSize: CGFloat = 34
+    private let slideActionSize: CGFloat = 44
+    private let slideActionSpacing: CGFloat = 10
+
+    private var slideActionsWidth: CGFloat {
+        slideActionSize * 2 + slideActionSpacing * 3
     }
 
     var body: some View {
+        rowContent
+            .sheet(item: $transactionBeingEdited) { transaction in
+                TransactionEditView(store: store, transaction: transaction)
+            }
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        #if os(macOS)
+        HStack(spacing: 10) {
+            TransactionRow(transaction: transaction)
+
+            rowActionButton(
+                symbolName: "pencil",
+                background: AppColor.primary
+            ) {
+                transactionBeingEdited = transaction
+            }
+
+            rowActionButton(
+                symbolName: "trash",
+                background: AppColor.danger
+            ) {
+                deleteTransaction()
+            }
+        }
+        #else
+        switch iOSInteractionStyle {
+        case .listSwipe:
+            listSwipeRow
+        case .slideReveal:
+            slideRevealRow
+        }
+        #endif
+    }
+
+    #if os(iOS)
+    private var listSwipeRow: some View {
+        TransactionRow(transaction: transaction)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                deleteSwipeButton
+                editSwipeButton
+            }
+    }
+
+    private var slideRevealRow: some View {
         ZStack(alignment: .trailing) {
-            HStack(spacing: actionSpacing) {
-                rowActionButton(
+            HStack(spacing: slideActionSpacing) {
+                slideActionButton(
                     symbolName: "pencil",
                     background: AppColor.primary
                 ) {
@@ -1033,7 +1105,7 @@ private struct EditableTransactionRow: View {
                     transactionBeingEdited = transaction
                 }
 
-                rowActionButton(
+                slideActionButton(
                     symbolName: "trash",
                     background: AppColor.danger
                 ) {
@@ -1041,8 +1113,8 @@ private struct EditableTransactionRow: View {
                     deleteTransaction()
                 }
             }
-            .padding(.horizontal, actionSpacing)
-            .frame(width: actionsWidth)
+            .padding(.horizontal, slideActionSpacing)
+            .frame(width: slideActionsWidth)
 
             TransactionRow(transaction: transaction)
                 .background(AppColor.surface)
@@ -1062,12 +1134,27 @@ private struct EditableTransactionRow: View {
                 closeActions()
             }
         }
-        .sheet(item: $transactionBeingEdited) { transaction in
-            TransactionEditView(store: store, transaction: transaction)
-        }
     }
 
-    private func rowActionButton(
+    private var deleteSwipeButton: some View {
+        Button(role: .destructive) {
+            deleteTransaction()
+        } label: {
+            Image(systemName: "trash")
+        }
+        .tint(AppColor.danger)
+    }
+
+    private var editSwipeButton: some View {
+        Button {
+            transactionBeingEdited = transaction
+        } label: {
+            Image(systemName: "pencil")
+        }
+        .tint(AppColor.primary)
+    }
+
+    private func slideActionButton(
         symbolName: String,
         background: Color,
         action: @escaping () -> Void
@@ -1076,7 +1163,7 @@ private struct EditableTransactionRow: View {
             Image(systemName: symbolName)
                 .font(.headline)
                 .foregroundStyle(.white)
-                .frame(width: actionSize, height: actionSize)
+                .frame(width: slideActionSize, height: slideActionSize)
                 .background(background)
                 .clipShape(Circle())
         }
@@ -1095,7 +1182,7 @@ private struct EditableTransactionRow: View {
                 }
 
                 let proposedOffset = (dragStartOffset ?? rowOffset) + value.translation.width
-                rowOffset = min(0, max(-actionsWidth, proposedOffset))
+                rowOffset = min(0, max(-slideActionsWidth, proposedOffset))
             }
             .onEnded { value in
                 defer {
@@ -1107,8 +1194,8 @@ private struct EditableTransactionRow: View {
                     return
                 }
 
-                let shouldOpen = rowOffset < -actionsWidth * 0.42
-                    || value.predictedEndTranslation.width < -actionsWidth
+                let shouldOpen = rowOffset < -slideActionsWidth * 0.42
+                    || value.predictedEndTranslation.width < -slideActionsWidth
                 if shouldOpen {
                     revealActions()
                 } else {
@@ -1119,7 +1206,7 @@ private struct EditableTransactionRow: View {
 
     private func revealActions() {
         revealedTransactionID = transaction.id
-        rowOffset = -actionsWidth
+        rowOffset = -slideActionsWidth
     }
 
     private func closeActions() {
@@ -1127,6 +1214,23 @@ private struct EditableTransactionRow: View {
         if revealedTransactionID == transaction.id {
             revealedTransactionID = nil
         }
+    }
+    #endif
+
+    private func rowActionButton(
+        symbolName: String,
+        background: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbolName)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: macActionSize, height: macActionSize)
+                .background(background)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func deleteTransaction() {
@@ -1136,6 +1240,11 @@ private struct EditableTransactionRow: View {
             message = error.localizedDescription
         }
     }
+}
+
+private enum TransactionRowInteractionStyle {
+    case listSwipe
+    case slideReveal
 }
 
 private struct TransactionEditView: View {
@@ -1666,6 +1775,7 @@ struct RecentTransactionsSection: View {
                                     store: store,
                                     transaction: transaction,
                                     message: $message,
+                                    iOSInteractionStyle: .slideReveal,
                                     revealedTransactionID: $revealedTransactionID
                                 )
 

@@ -50,7 +50,6 @@ struct DashboardView: View {
                 }
                 .background(AppColor.background)
             }
-            .navigationTitle("总览")
             .sheet(isPresented: $isSelectingHistoryDate) {
                 HistoryDatePickerSheet(title: historySelectionPurpose.title, date: $draftHistoryDate) {
                     applySelectedHistoryDate()
