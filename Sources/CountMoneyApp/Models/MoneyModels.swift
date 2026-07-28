@@ -4,6 +4,7 @@ import SwiftUI
 enum TransactionKind: String, CaseIterable, Identifiable {
     case expense
     case income
+    case transfer
     case fundProfit
 
     var id: String { rawValue }
@@ -12,6 +13,7 @@ enum TransactionKind: String, CaseIterable, Identifiable {
         switch self {
         case .expense: "支出"
         case .income: "收入"
+        case .transfer: "转账"
         case .fundProfit: "基金盈亏"
         }
     }
@@ -240,6 +242,17 @@ struct MoneyCategory: Identifiable, Hashable {
 }
 
 extension MoneyCategory {
+    static let transfer = MoneyCategory(
+        id: UUID(uuidString: "A81E0D7F-4088-40F7-A6A5-7A634FE6C0FA")!,
+        presetKey: "expense_transfer",
+        name: "转账/提现",
+        kind: .expense,
+        symbolName: "arrow.left.arrow.right.circle.fill",
+        color: AppColor.primary,
+        sortOrder: 24,
+        isSystemPreset: true
+    )
+
     static let repayment = MoneyCategory(
         id: UUID(uuidString: "7E8C5A30-017B-438A-BF87-A9814C2B1320")!,
         presetKey: "expense_repayment",
@@ -273,6 +286,10 @@ extension MoneyCategory {
         isSystemPreset: true
     )
 
+    var isTransfer: Bool {
+        presetKey == Self.transfer.presetKey
+    }
+
     var isRepayment: Bool {
         presetKey == Self.repayment.presetKey
     }
@@ -283,6 +300,18 @@ extension MoneyCategory {
 
     var isFundRedemption: Bool {
         presetKey == Self.fundRedemption.presetKey
+    }
+
+    var isBalanceAdjustment: Bool {
+        presetKey == "income_transfer_in"
+    }
+
+    var isInternalTransfer: Bool {
+        isTransfer || isRepayment || isFundPurchase || isFundRedemption
+    }
+
+    var isExcludedFromIncomeExpenseStatistics: Bool {
+        isInternalTransfer || isBalanceAdjustment
     }
 }
 
@@ -297,6 +326,28 @@ struct MoneyTransaction: Identifiable, Hashable {
     var installmentMonths: Int? = nil
     var repaymentAdjustments: [RepaymentAdjustment] = []
     var occurredAt: Date
+
+    var countsAsExpense: Bool {
+        kind == .expense && !category.isExcludedFromIncomeExpenseStatistics
+    }
+
+    var countsAsIncome: Bool {
+        kind == .income && !category.isExcludedFromIncomeExpenseStatistics
+    }
+
+    var statisticsBalanceChange: Decimal {
+        if category.isInternalTransfer || kind == .transfer {
+            return 0
+        }
+        switch kind {
+        case .expense:
+            return -amount
+        case .income, .fundProfit:
+            return amount
+        case .transfer:
+            return 0
+        }
+    }
 }
 
 struct RepaymentAdjustment: Hashable, Codable {
@@ -422,6 +473,29 @@ enum LedgerCalculator {
                 continue
             }
 
+            if transaction.category.isTransfer {
+                guard let paymentAccount = transaction.paymentAccount,
+                      paymentAccount.id != transaction.account.id,
+                      balances[paymentAccount.id] != nil,
+                      let paymentAssetKind = assetKinds[paymentAccount.id]
+                else {
+                    continue
+                }
+                applyExpense(
+                    amount: transaction.amount,
+                    accountID: paymentAccount.id,
+                    assetKind: paymentAssetKind,
+                    balances: &balances
+                )
+                applyIncome(
+                    amount: transaction.amount,
+                    accountID: transaction.account.id,
+                    assetKind: assetKind,
+                    balances: &balances
+                )
+                continue
+            }
+
             if transaction.kind == .expense,
                transaction.category.isFundPurchase,
                let paymentAccount = transaction.paymentAccount,
@@ -457,7 +531,7 @@ enum LedgerCalculator {
                     }
                 case .income:
                     balances[transaction.account.id, default: 0] -= transaction.amount
-                case .fundProfit:
+                case .transfer, .fundProfit:
                     break
                 }
             } else {
@@ -466,7 +540,7 @@ enum LedgerCalculator {
                     balances[transaction.account.id, default: 0] -= transaction.amount
                 case .income:
                     balances[transaction.account.id, default: 0] += transaction.amount
-                case .fundProfit:
+                case .transfer, .fundProfit:
                     break
                 }
             }
@@ -485,6 +559,19 @@ enum LedgerCalculator {
             balances[accountID, default: 0] += amount
         } else {
             balances[accountID, default: 0] -= amount
+        }
+    }
+
+    private static func applyIncome(
+        amount: Decimal,
+        accountID: UUID,
+        assetKind: AssetKind,
+        balances: inout [UUID: Decimal]
+    ) {
+        if assetKind.isDebtAccount {
+            balances[accountID, default: 0] -= amount
+        } else {
+            balances[accountID, default: 0] += amount
         }
     }
 
@@ -526,8 +613,8 @@ struct MonthlyOverview: Hashable {
             calendar.isDate($0.occurredAt, equalTo: now, toGranularity: .month)
                 && $0.occurredAt <= cutoff
         }
-        let expenseTransactions = monthTransactions.filter { $0.kind == .expense }
-        let incomeTransactions = monthTransactions.filter { $0.kind == .income }
+        let expenseTransactions = monthTransactions.filter(\.countsAsExpense)
+        let incomeTransactions = monthTransactions.filter(\.countsAsIncome)
 
         self.income = incomeTransactions.map(\.amount).reduce(0, +)
         self.expense = expenseTransactions.map(\.amount).reduce(0, +)
@@ -558,12 +645,12 @@ struct MonthlyOverview: Hashable {
                 .filter { calendar.isDate($0.occurredAt, inSameDayAs: date) }
 
             let income = dayTransactions
-                .filter { $0.kind == .income }
+                .filter(\.countsAsIncome)
                 .map(\.amount)
                 .reduce(0, +)
 
             let expense = dayTransactions
-                .filter { $0.kind == .expense }
+                .filter(\.countsAsExpense)
                 .map(\.amount)
                 .reduce(0, +)
 

@@ -23,6 +23,7 @@ enum PreviewData {
             sortOrder: 20,
             isSystemPreset: true
         ),
+        .transfer,
         .repayment,
         .fundPurchase,
         MoneyCategory(
@@ -330,9 +331,11 @@ enum PreviewData {
     static func categories(for kind: TransactionKind) -> [MoneyCategory] {
         switch kind {
         case .expense:
-            expenseCategories
+            expenseCategories.filter { !$0.isTransfer }
         case .income:
             incomeCategories
+        case .transfer:
+            expenseCategories.filter(\.isTransfer)
         case .fundProfit:
             []
         }
@@ -346,6 +349,8 @@ enum PreviewData {
         switch fallbackKind {
         case .income:
             return incomeCategories.last!
+        case .transfer:
+            return MoneyCategory.transfer
         case .fundProfit:
             return incomeCategories.last!
         case .expense:

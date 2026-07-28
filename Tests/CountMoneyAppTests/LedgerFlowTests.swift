@@ -215,6 +215,34 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.assetOverview.net, 0)
     }
 
+    func testBalanceAdjustmentChangesAccountWithoutCountingAsIncome() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let account = try XCTUnwrap(store.paymentAccounts.first { $0.name == "零钱通" })
+        let adjustment = try XCTUnwrap(store.incomeCategories.first { $0.isBalanceAdjustment })
+
+        try store.addTransaction(
+            kind: .income,
+            amount: 500,
+            category: adjustment,
+            account: account,
+            title: "余额校正"
+        )
+
+        let transaction = try XCTUnwrap(store.transactions.first { $0.category.isBalanceAdjustment })
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == account.id }?.balance, 500)
+        XCTAssertEqual(store.assetOverview.net, 500)
+        XCTAssertEqual(store.overview.income, 0)
+        XCTAssertEqual(store.overview.dailyCashflows.map(\.income).reduce(0, +), 0)
+        XCTAssertFalse(store.overview.categoryIncome.contains { $0.category.isBalanceAdjustment })
+        XCTAssertEqual(transaction.statisticsBalanceChange, 500)
+    }
+
     func testFundProfitIsCalculatedFromCurrentValueAndCost() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
@@ -630,8 +658,10 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, -50)
         XCTAssertEqual(store.assetOverview.debt, 70)
         XCTAssertEqual(store.assetOverview.currentMonthRepayment, 70)
-        XCTAssertEqual(store.overview.expense, 170)
+        XCTAssertEqual(store.overview.expense, 120)
         XCTAssertEqual(store.overview.income, 0)
+        XCTAssertFalse(store.overview.categorySpending.contains { $0.category.isRepayment })
+        XCTAssertEqual(store.overview.dailyCashflows.map(\.expense).reduce(0, +), 120)
         XCTAssertTrue(store.transactions.contains {
             $0.kind == .expense
                 && $0.category.isRepayment
@@ -682,6 +712,99 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.assetOverview.currentMonthRepayment, 120)
     }
 
+    func testTransferMovesMoneyWithoutChangingIncomeExpenseOrNetAssets() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        let importedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-imported-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: importedURL)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let source = try XCTUnwrap(store.balanceAccounts.first { $0.name == "借记卡" })
+        let destination = try XCTUnwrap(store.balanceAccounts.first { $0.name == "零钱通" })
+        let transfer = try XCTUnwrap(store.expenseCategories.first(where: \.isTransfer))
+
+        try store.addTransaction(
+            kind: .transfer,
+            amount: 500,
+            category: transfer,
+            account: destination,
+            title: "银行卡提现",
+            paymentAccount: source
+        )
+
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == source.id }?.balance, -500)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == destination.id }?.balance, 500)
+        XCTAssertEqual(store.assetOverview.net, 0)
+        XCTAssertEqual(store.overview.expense, 0)
+        XCTAssertEqual(store.overview.income, 0)
+        XCTAssertEqual(store.overview.dailyCashflows.map(\.expense).reduce(0, +), 0)
+        XCTAssertFalse(store.overview.categorySpending.contains { $0.category.isTransfer })
+
+        let transaction = try XCTUnwrap(store.transactions.first { $0.category.isTransfer })
+        XCTAssertEqual(transaction.paymentAccount?.id, source.id)
+        XCTAssertEqual(transaction.account.id, destination.id)
+
+        let importedStore = AppStore(database: try SQLiteDatabase(url: importedURL))
+        try importedStore.importData(store.exportData())
+        let importedTransaction = try XCTUnwrap(importedStore.transactions.first { $0.category.isTransfer })
+        XCTAssertEqual(importedTransaction.kind, .transfer)
+        XCTAssertEqual(importedStore.ledgerAssets.first { $0.id == source.id }?.balance, -500)
+        XCTAssertEqual(importedStore.ledgerAssets.first { $0.id == destination.id }?.balance, 500)
+
+        try store.deleteTransaction(transaction)
+
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == source.id }?.balance, 0)
+        XCTAssertEqual(store.ledgerAssets.first { $0.id == destination.id }?.balance, 0)
+    }
+
+    func testTransferRejectsMissingOrIdenticalAccounts() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        let store = AppStore(database: try SQLiteDatabase(url: url))
+        let account = try XCTUnwrap(store.balanceAccounts.first { $0.name == "借记卡" })
+        let otherAccount = try XCTUnwrap(store.balanceAccounts.first { $0.name == "零钱通" })
+        let transfer = try XCTUnwrap(store.expenseCategories.first(where: \.isTransfer))
+
+        XCTAssertThrowsError(
+            try store.addTransaction(
+                kind: .transfer,
+                amount: 100,
+                category: transfer,
+                account: account,
+                title: "无效转账"
+            )
+        )
+        XCTAssertThrowsError(
+            try store.addTransaction(
+                kind: .transfer,
+                amount: 100,
+                category: transfer,
+                account: account,
+                title: "无效转账",
+                paymentAccount: account
+            )
+        )
+        XCTAssertThrowsError(
+            try store.addTransaction(
+                kind: .expense,
+                amount: 100,
+                category: transfer,
+                account: otherAccount,
+                title: "类型不匹配",
+                paymentAccount: account
+            )
+        )
+        XCTAssertFalse(store.transactions.contains { $0.category.isTransfer })
+    }
+
     func testLegacyDefaultAssetNamesAreNormalizedOnStartup() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
@@ -703,10 +826,11 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertTrue(store.assets.contains { $0.kind == .wechatChange && $0.name == "零钱" })
         XCTAssertTrue(store.assets.contains { $0.kind == .wechatCredit && $0.name == "微信分付" })
         XCTAssertFalse(store.assets.contains { $0.name == "支付宝花呗" || $0.name == "微信零钱" || $0.name == "微信待还" })
+        XCTAssertTrue(store.expenseCategories.contains(where: \.isTransfer))
         XCTAssertTrue(store.expenseCategories.contains(where: \.isRepayment))
     }
 
-    func testFundPurchaseCountsAsExpenseAndMovesCashIntoFund() throws {
+    func testFundPurchaseMovesCashIntoFundWithoutCountingAsExpense() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
         defer {
@@ -737,7 +861,7 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, -300)
         XCTAssertEqual(updatedFund.fundCost, 300)
         XCTAssertEqual(updatedFund.fundCurrentValue, 300)
-        XCTAssertEqual(store.overview.expense, 300)
+        XCTAssertEqual(store.overview.expense, 0)
         XCTAssertTrue(store.transactions.contains {
             $0.category.isFundPurchase
                 && $0.account.id == fund.id
@@ -745,7 +869,7 @@ final class LedgerFlowTests: XCTestCase {
         })
     }
 
-    func testFundRedemptionCountsAsIncomeAndMovesFundIntoCash() throws {
+    func testFundRedemptionMovesFundIntoCashWithoutCountingAsIncome() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("count-money-\(UUID().uuidString).sqlite")
         defer {
@@ -780,7 +904,7 @@ final class LedgerFlowTests: XCTestCase {
         XCTAssertEqual(store.ledgerAssets.first { $0.id == debit.id }?.balance, 200)
         XCTAssertEqual(updatedFund.fundCost, 300)
         XCTAssertEqual(updatedFund.fundCurrentValue, 300)
-        XCTAssertEqual(store.overview.income, 200)
+        XCTAssertEqual(store.overview.income, 0)
         XCTAssertTrue(store.transactions.contains {
             $0.category.isFundRedemption
                 && $0.account.id == debit.id

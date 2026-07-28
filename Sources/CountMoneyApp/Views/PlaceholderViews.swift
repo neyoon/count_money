@@ -72,6 +72,8 @@ struct EntryView: View {
         switch selectedKind {
         case .fundProfit:
             fundAccounts
+        case .transfer:
+            store.balanceAccounts
         case .expense where selectedCategory.isFundPurchase:
             fundAccounts
         case .expense where selectedCategory.isRepayment:
@@ -83,9 +85,12 @@ struct EntryView: View {
 
     private var canUseInstallment: Bool {
         selectedKind == .expense
-            && !selectedCategory.isFundPurchase
-            && !selectedCategory.isRepayment
+            && !selectedCategory.isInternalTransfer
             && (selectedAsset?.kind.supportsInstallment ?? false)
+    }
+
+    private var isTransferEntry: Bool {
+        selectedKind == .transfer
     }
 
     private var isRepaymentEntry: Bool {
@@ -101,7 +106,7 @@ struct EntryView: View {
     }
 
     private var needsLinkedAccount: Bool {
-        isRepaymentEntry || isFundPurchaseEntry || isFundRedemptionEntry
+        isTransferEntry || isRepaymentEntry || isFundPurchaseEntry || isFundRedemptionEntry
     }
 
     private var repaymentPaymentAccounts: [MoneyAccount] {
@@ -110,6 +115,9 @@ struct EntryView: View {
     }
 
     private var linkedAccounts: [MoneyAccount] {
+        if isTransferEntry {
+            return store.balanceAccounts.filter { $0.id != selectedAccount?.id }
+        }
         if isFundRedemptionEntry {
             return fundAccounts
         }
@@ -143,7 +151,7 @@ struct EntryView: View {
                             selectedCategory = first
                         }
                         ensureSelectedAccountsAreValid()
-                        if newValue != .expense || selectedCategory.isRepayment || selectedCategory.isFundPurchase {
+                        if newValue != .expense || selectedCategory.isInternalTransfer {
                             useInstallment = false
                         }
                         if newValue != .fundProfit {
@@ -255,7 +263,7 @@ struct EntryView: View {
                         selectedAccountID = newValue
                         ensureSelectedPaymentAccountIsValid()
                         let asset = store.ledgerAssets.first { $0.id == newValue }
-                        if selectedCategory.isRepayment || selectedCategory.isFundPurchase || !(asset?.kind.supportsInstallment ?? false) {
+                        if selectedCategory.isInternalTransfer || !(asset?.kind.supportsInstallment ?? false) {
                             useInstallment = false
                         }
                     }
@@ -304,6 +312,8 @@ struct EntryView: View {
 
     private var accountTitle: String {
         switch selectedKind {
+        case .transfer:
+            return "转入账户"
         case .expense where selectedCategory.isFundPurchase:
             return "基金"
         case .expense where selectedCategory.isRepayment:
@@ -318,6 +328,9 @@ struct EntryView: View {
     }
 
     private var linkedAccountTitle: String {
+        if isTransferEntry {
+            return "转出账户"
+        }
         if isFundRedemptionEntry {
             return "赎回基金"
         }
@@ -326,6 +339,9 @@ struct EntryView: View {
     }
 
     private var emptyLinkedAccountText: String {
+        if isTransferEntry {
+            return "请先添加另一个可转账的余额账户。"
+        }
         if isFundRedemptionEntry {
             return "请先在资产页添加基金。"
         }
@@ -337,6 +353,8 @@ struct EntryView: View {
         switch selectedKind {
         case .fundProfit:
             return "请先在资产页添加基金。"
+        case .transfer:
+            return "请先在资产页添加银行卡、支付宝或微信余额账户。"
         case .expense where selectedCategory.isFundPurchase:
             return "请先在资产页添加基金。"
         case .expense where selectedCategory.isRepayment:
@@ -519,7 +537,7 @@ struct EntryView: View {
     private func selectCategory(_ category: MoneyCategory) {
         selectedCategory = category
         ensureSelectedAccountsAreValid()
-        if category.isRepayment || category.isFundPurchase {
+        if category.isInternalTransfer {
             useInstallment = false
         }
     }
@@ -557,13 +575,13 @@ struct EntryView: View {
     }
 
     private func ensureSelectedPaymentAccountIsValid() {
-        guard isRepaymentEntry else { return }
+        guard needsLinkedAccount else { return }
         if let selectedPaymentAccountID,
-           repaymentPaymentAccounts.contains(where: { $0.id == selectedPaymentAccountID }) {
+           linkedAccounts.contains(where: { $0.id == selectedPaymentAccountID }) {
             return
         }
 
-        selectedPaymentAccountID = repaymentPaymentAccounts.first?.id
+        selectedPaymentAccountID = linkedAccounts.first?.id
     }
 
     private func resetEntryDateToToday() {
@@ -991,13 +1009,7 @@ struct TransactionDateDetailView: View {
         var transactions: [MoneyTransaction] = []
 
         for transaction in store.transactions where calendar.isDate(transaction.occurredAt, inSameDayAs: date) {
-            switch transaction.kind {
-            case .expense:
-                dailyBalanceChange -= transaction.amount
-            case .income, .fundProfit:
-                dailyBalanceChange += transaction.amount
-            }
-
+            dailyBalanceChange += transaction.statisticsBalanceChange
             transactions.append(transaction)
         }
 
@@ -1297,7 +1309,14 @@ private struct TransactionEditView: View {
     init(store: AppStore, transaction: MoneyTransaction) {
         self.store = store
         self.transaction = transaction
-        let initialKind = transaction.kind == .income ? TransactionKind.income : .expense
+        let initialKind: TransactionKind = switch transaction.kind {
+        case .income:
+            .income
+        case .transfer:
+            .transfer
+        case .expense, .fundProfit:
+            .expense
+        }
         let visibleCategories = store.categories(for: initialKind)
         let initialCategory = visibleCategories.first { $0.id == transaction.category.id }
             ?? visibleCategories.first
@@ -1358,6 +1377,9 @@ private struct TransactionEditView: View {
     }
 
     private var entryAccounts: [MoneyAccount] {
+        if isTransferEntry {
+            return store.balanceAccounts
+        }
         if isFundPurchaseEntry {
             return fundAccounts
         }
@@ -1375,9 +1397,12 @@ private struct TransactionEditView: View {
 
     private var canUseInstallment: Bool {
         selectedKind == .expense
-            && !selectedCategory.isFundPurchase
-            && !selectedCategory.isRepayment
+            && !selectedCategory.isInternalTransfer
             && (selectedAsset?.kind.supportsInstallment ?? false)
+    }
+
+    private var isTransferEntry: Bool {
+        selectedKind == .transfer
     }
 
     private var isRepaymentEntry: Bool {
@@ -1393,10 +1418,13 @@ private struct TransactionEditView: View {
     }
 
     private var needsLinkedAccount: Bool {
-        isRepaymentEntry || isFundPurchaseEntry || isFundRedemptionEntry
+        isTransferEntry || isRepaymentEntry || isFundPurchaseEntry || isFundRedemptionEntry
     }
 
     private var linkedAccounts: [MoneyAccount] {
+        if isTransferEntry {
+            return store.balanceAccounts.filter { $0.id != selectedAccount?.id }
+        }
         if isFundRedemptionEntry {
             return fundAccounts
         }
@@ -1459,6 +1487,7 @@ private struct TransactionEditView: View {
         Picker("类型", selection: $selectedKind) {
             Text(TransactionKind.expense.title).tag(TransactionKind.expense)
             Text(TransactionKind.income.title).tag(TransactionKind.income)
+            Text(TransactionKind.transfer.title).tag(TransactionKind.transfer)
         }
         .pickerStyle(.segmented)
         .onChange(of: selectedKind) { _, newValue in
@@ -1466,7 +1495,7 @@ private struct TransactionEditView: View {
                 selectedCategory = first
             }
             ensureSelectedAccountsAreValid()
-            if newValue != .expense || selectedCategory.isRepayment || selectedCategory.isFundPurchase {
+            if newValue != .expense || selectedCategory.isInternalTransfer {
                 useInstallment = false
             }
         }
@@ -1538,7 +1567,7 @@ private struct TransactionEditView: View {
                         selectedAccountID = newValue
                         ensureSelectedPaymentAccountIsValid()
                         let asset = store.ledgerAssets.first { $0.id == newValue }
-                        if selectedCategory.isRepayment || selectedCategory.isFundPurchase || !(asset?.kind.supportsInstallment ?? false) {
+                        if selectedCategory.isInternalTransfer || !(asset?.kind.supportsInstallment ?? false) {
                             useInstallment = false
                         }
                     }
@@ -1555,6 +1584,9 @@ private struct TransactionEditView: View {
     }
 
     private var accountTitle: String {
+        if isTransferEntry {
+            return "转入账户"
+        }
         if isFundPurchaseEntry {
             return "基金"
         }
@@ -1566,6 +1598,9 @@ private struct TransactionEditView: View {
     }
 
     private var emptyAccountText: String {
+        if isTransferEntry {
+            return "请先在资产页添加银行卡、支付宝或微信余额账户。"
+        }
         if isFundPurchaseEntry {
             return "请先在资产页添加基金。"
         }
@@ -1606,6 +1641,9 @@ private struct TransactionEditView: View {
     }
 
     private var linkedAccountTitle: String {
+        if isTransferEntry {
+            return "转出账户"
+        }
         if isFundRedemptionEntry {
             return "赎回基金"
         }
@@ -1614,6 +1652,9 @@ private struct TransactionEditView: View {
     }
 
     private var emptyLinkedAccountText: String {
+        if isTransferEntry {
+            return "请先添加另一个可转账的余额账户。"
+        }
         if isFundRedemptionEntry {
             return "请先在资产页添加基金。"
         }
@@ -1646,23 +1687,25 @@ private struct TransactionEditView: View {
 
     @ViewBuilder
     private var categorySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(selectedKind == .expense ? "支出分类" : "收入分类")
-                .font(.headline)
-                .foregroundStyle(AppColor.ink)
+        if selectedKind == .expense || selectedKind == .income {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(selectedKind == .expense ? "支出分类" : "收入分类")
+                    .font(.headline)
+                    .foregroundStyle(AppColor.ink)
 
-            LazyVGrid(columns: categoryColumns, spacing: 10) {
-                ForEach(visibleCategories) { category in
-                    CategoryButton(
-                        category: category,
-                        isSelected: category.id == selectedCategory.id
-                    ) {
-                        selectCategory(category)
+                LazyVGrid(columns: categoryColumns, spacing: 10) {
+                    ForEach(visibleCategories) { category in
+                        CategoryButton(
+                            category: category,
+                            isSelected: category.id == selectedCategory.id
+                        ) {
+                            selectCategory(category)
+                        }
                     }
                 }
             }
+            .surface()
         }
-        .surface()
     }
 
     private var saveButton: some View {
@@ -1727,7 +1770,7 @@ private struct TransactionEditView: View {
 
         selectedCategory = category
         ensureSelectedAccountsAreValid()
-        if category.isRepayment || category.isFundPurchase {
+        if category.isInternalTransfer {
             useInstallment = false
         }
     }

@@ -69,6 +69,10 @@ final class AppStore {
     }
 
     var repaymentPaymentAccounts: [MoneyAccount] {
+        balanceAccounts
+    }
+
+    var balanceAccounts: [MoneyAccount] {
         ledgerAssets
             .filter { $0.kind.canFundRepayment }
             .map { asset in
@@ -132,9 +136,11 @@ final class AppStore {
     func categories(for kind: TransactionKind) -> [MoneyCategory] {
         switch kind {
         case .expense:
-            expenseCategories
+            expenseCategories.filter { !$0.isTransfer }
         case .income:
             incomeCategories
+        case .transfer:
+            expenseCategories.filter(\.isTransfer)
         case .fundProfit:
             []
         }
@@ -207,6 +213,15 @@ final class AppStore {
         occurredAt: Date = Date()
     ) throws {
         guard kind != .fundProfit else { return }
+        guard isValidTransfer(
+            kind: kind,
+            category: category,
+            account: account,
+            paymentAccount: paymentAccount,
+            assets: assets
+        ) else {
+            throw AppStoreFailure.invalidTransferAccounts
+        }
 
         var nextTransactions = transactions
         var nextAssets = assets
@@ -250,6 +265,15 @@ final class AppStore {
         occurredAt: Date
     ) throws {
         guard kind != .fundProfit else { return }
+        guard isValidTransfer(
+            kind: kind,
+            category: category,
+            account: account,
+            paymentAccount: paymentAccount,
+            assets: assets
+        ) else {
+            throw AppStoreFailure.invalidTransferAccounts
+        }
 
         var nextTransactions = transactions
         guard nextTransactions.contains(where: { $0.id == original.id }) else { return }
@@ -768,7 +792,7 @@ final class AppStore {
             throw AppStoreFailure.invalidImportAmount(record.amount)
         }
 
-        return MoneyTransaction(
+        let transaction = MoneyTransaction(
             id: id,
             kind: kind,
             title: record.title,
@@ -780,6 +804,16 @@ final class AppStore {
             repaymentAdjustments: record.repaymentAdjustments ?? [],
             occurredAt: occurredAt
         )
+        guard isValidTransfer(
+            kind: transaction.kind,
+            category: transaction.category,
+            account: transaction.account,
+            paymentAccount: transaction.paymentAccount,
+            assets: assets
+        ) else {
+            throw AppStoreFailure.invalidImportRecord
+        }
+        return transaction
     }
 
     private func paymentAccount(for record: TransactionExportRecord, assets: inout [AssetItem]) -> MoneyAccount? {
@@ -997,7 +1031,7 @@ final class AppStore {
             title: title,
             category: category,
             account: account,
-            paymentAccount: category.isRepayment || category.isFundPurchase || category.isFundRedemption ? paymentAccount : nil,
+            paymentAccount: category.isInternalTransfer ? paymentAccount : nil,
             amount: amount,
             installmentMonths: usesInstallmentPlan ? installmentMonths : nil,
             repaymentAdjustments: repaymentAdjustments,
@@ -1184,6 +1218,10 @@ final class AppStore {
 
     private func ensureRecommendedCategories() throws {
         var changed = false
+        if !expenseCategories.contains(where: \.isTransfer) {
+            expenseCategories.append(.transfer)
+            changed = true
+        }
         if !expenseCategories.contains(where: \.isRepayment) {
             expenseCategories.append(.repayment)
             changed = true
@@ -1200,6 +1238,25 @@ final class AppStore {
         expenseCategories.sort { $0.sortOrder < $1.sortOrder }
         incomeCategories.sort { $0.sortOrder < $1.sortOrder }
         try persistCategories(expenseCategories + incomeCategories)
+    }
+
+    private func isValidTransfer(
+        kind: TransactionKind,
+        category: MoneyCategory,
+        account: MoneyAccount,
+        paymentAccount: MoneyAccount?,
+        assets: [AssetItem]
+    ) -> Bool {
+        guard (kind == .transfer) == category.isTransfer else { return false }
+        guard kind == .transfer else { return true }
+        guard let paymentAccount,
+              paymentAccount.id != account.id,
+              let destinationKind = assets.first(where: { $0.id == account.id })?.kind,
+              let sourceKind = assets.first(where: { $0.id == paymentAccount.id })?.kind
+        else {
+            return false
+        }
+        return destinationKind.canFundRepayment && sourceKind.canFundRepayment
     }
 
     private func normalizedDefaultAssetName(for asset: AssetItem) -> String? {
@@ -1227,6 +1284,7 @@ enum AppStoreFailure: LocalizedError {
     case invalidImportRecord
     case invalidImportAmount(String)
     case invalidMoneyInput(String)
+    case invalidTransferAccounts
     case assetInUse(String)
 
     var errorDescription: String? {
@@ -1239,6 +1297,8 @@ enum AppStoreFailure: LocalizedError {
             "导入文件里有无法识别的金额：\(value)"
         case let .invalidMoneyInput(field):
             "\(field) 的金额格式不正确"
+        case .invalidTransferAccounts:
+            "转出账户和转入账户必须是两个不同的余额账户"
         case let .assetInUse(name):
             "“\(name)”已经被账目使用，不能直接删除"
         }

@@ -761,36 +761,41 @@ struct TransactionRow: View {
     var transaction: MoneyTransaction
 
     private var amountText: String {
-        switch transaction.kind {
+        if transaction.category.isInternalTransfer {
+            return MoneyFormat.yuan(transaction.amount)
+        }
+        return switch transaction.kind {
         case .expense:
             "-\(MoneyFormat.yuan(transaction.amount))"
         case .income:
             MoneyFormat.yuan(transaction.amount, signed: true)
+        case .transfer:
+            MoneyFormat.yuan(transaction.amount)
         case .fundProfit:
             MoneyFormat.yuan(transaction.amount, signed: transaction.amount > 0)
         }
     }
 
     private var amountColor: Color {
-        switch transaction.kind {
+        if transaction.category.isInternalTransfer {
+            return AppColor.primary
+        }
+        return switch transaction.kind {
         case .expense:
             AppColor.danger
         case .income:
             AppColor.success
+        case .transfer:
+            AppColor.primary
         case .fundProfit:
             transaction.amount < 0 ? AppColor.danger : AppColor.success
         }
     }
 
     private var accountText: String {
-        if (transaction.category.isRepayment || transaction.category.isFundPurchase),
-           let paymentAccount = transaction.paymentAccount {
-            return "\(paymentAccount.name) -> \(transaction.account.name)"
-        }
-
-        if transaction.category.isFundRedemption,
-           let fundAccount = transaction.paymentAccount {
-            return "\(fundAccount.name) -> \(transaction.account.name)"
+        if transaction.category.isInternalTransfer,
+           let sourceAccount = transaction.paymentAccount {
+            return "\(sourceAccount.name) -> \(transaction.account.name)"
         }
 
         return transaction.account.name
