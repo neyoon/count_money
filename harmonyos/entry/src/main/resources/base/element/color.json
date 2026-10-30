@@ -1,0 +1,68 @@
+{
+  "color": [
+    {
+      "name": "background",
+      "value": "#F6F8FA"
+    },
+    {
+      "name": "surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "secondary_surface",
+      "value": "#EFF2F5"
+    },
+    {
+      "name": "line",
+      "value": "#D1D9E0"
+    },
+    {
+      "name": "ink",
+      "value": "#1F2328"
+    },
+    {
+      "name": "muted",
+      "value": "#59636E"
+    },
+    {
+      "name": "primary",
+      "value": "#1F2328"
+    },
+    {
+      "name": "primary_tint",
+      "value": "#EFF2F5"
+    },
+    {
+      "name": "on_primary",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "success",
+      "value": "#1A7F37"
+    },
+    {
+      "name": "danger",
+      "value": "#CF222E"
+    },
+    {
+      "name": "danger_tint",
+      "value": "#FFEBE9"
+    },
+    {
+      "name": "accent",
+      "value": "#0969DA"
+    },
+    {
+      "name": "accent_tint",
+      "value": "#DDF4FF"
+    },
+    {
+      "name": "purple",
+      "value": "#8250DF"
+    },
+    {
+      "name": "warning",
+      "value": "#9A6700"
+    }
+  ]
+}

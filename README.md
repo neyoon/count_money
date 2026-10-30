@@ -1,17 +1,14 @@
-# Count Money
+# Tally
 
-个人记账应用，支持 iOS 和 macOS，用来快速记录日常收入、支出和资产变化。
+个人记账应用，同一仓库维护 Apple 与 HarmonyOS 原生客户端。
 
-主要功能：
+| 目录 | 平台 | 打开方式 |
+| --- | --- | --- |
+| `apple/` | iOS / macOS | Xcode 打开 `apple/CountMoney.xcodeproj` |
+| `harmonyos/` | HarmonyOS | 先复制本地构建配置，再用 DevEco Studio 打开该目录 |
 
-- 快速记录支出和收入。
-- 按账户、分类和时间查看账目。
-- 查看本月收入、支出、结余和分类占比。
-- 管理现金、银行卡、花呗、零钱、微信分付等资产。
-- 通过截图识别金额，生成待确认的记账草稿。
-- 导出和导入 JSON 数据，方便备份和迁移。
+Apple 原有代码和项目文件整体移入 `apple/`，内部相对路径保持不变。
+鸿蒙开发、构建和签名说明见 [harmonyos/README.md](harmonyos/README.md)。
+Apple 功能说明见 [apple/README.md](apple/README.md)。
 
-平台支持：
-
-- iPhone：快速记账、截图识别和日常查看。
-- Mac：查看、录入、编辑账目，以及管理资产和导入导出数据。
+两个客户端支持 version 2 JSON 账本备份迁移。个人账本、备份、签名凭据和构建产物不提交到仓库；版本库中的 JSON 仅为应用必需资源配置。

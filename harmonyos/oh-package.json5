@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "count-money-harmony",
+  "version": "0.1.0",
+  "description": "Count Money 鸿蒙原生版",
+  "dependencies": {},
+  "devDependencies": {}
+}

@@ -1,6 +1,42 @@
+# Local build and IDE state
 .DS_Store
 .build/
 .swiftpm/
 *.xcodeproj/project.xcworkspace/
 *.xcworkspace/
 *.xcuserdata/
+.idea/
+node_modules/
+oh_modules/
+.hvigor/
+.tooling/
+build/
+# Private financial data: JSON is denied unless it is an explicit app resource.
+*.json
+*.jsonl
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.csv
+*.zip
+backups/
+exports/
+tallyexp*
+tally-export*
+!apple/**/Contents.json
+!harmonyos/AppScope/resources/base/element/string.json
+!harmonyos/entry/src/main/resources/base/element/string.json
+!harmonyos/entry/src/main/resources/base/element/color.json
+!harmonyos/entry/src/main/resources/dark/element/color.json
+!harmonyos/entry/src/main/resources/base/profile/main_pages.json
+!harmonyos/entry/src/main/resources/base/profile/form_config.json
+# Signing credentials never belong in the repository.
+*.p12
+*.p7b
+*.cer
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
