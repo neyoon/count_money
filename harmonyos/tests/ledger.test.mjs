@@ -263,3 +263,48 @@ test('私有苹果备份的基金展示逐一对齐 fundMarketValue，而非 bal
   const ledger = L.parseBackup(JSON.stringify(raw));
   assert.ok(raw.assets.every((a, i) => a.kind !== 'fund' || L.assetValues(ledger)[i] === L.cents(a.fundMarketValue ?? a.balance)), '基金展示必须采用苹果市值');
 });
+
+test('展开明细跨月份默认日号限制到月末，含闰年', () => {
+  assert.equal(L.calendarDay('2026-10', 30), 30);
+  assert.equal(L.calendarDay('2026-02', 30), 28);
+  assert.equal(L.calendarDay('2028-02', 30), 29);
+  assert.equal(L.calendarDay('2026-04', 31), 30);
+});
+test('月历周一开头、完整周、跨年月份和所有日期无遗漏', () => {
+  for (const month of ['2026-02', '2028-02', '2026-10', '2026-12', '2027-01']) {
+    const cells = L.calendarCells(month);
+    const [y, m] = month.split('-').map(Number);
+    const count = new Date(y, m, 0).getDate();
+    assert.equal(cells.length % 7, 0);
+    assert.equal(cells.indexOf(1), (new Date(y, m - 1, 1).getDay() + 6) % 7);
+    assert.deepEqual(cells.filter(x => x > 0), Array.from({ length: count }, (_, i) => i + 1));
+  }
+});
+
+test('日期分组快照在长列表切到单日、空列表后仍可安全绘制旧行', () => {
+  const items = Array.from({ length: 80 }, (_, i) => transaction({ id: uuid(100 + i), occurredAt: `2026-10-${String(30 - Math.floor(i / 4)).padStart(2, '0')}T12:00:00+08:00` }));
+  const original = L.transactionRows(items);
+  const oldCallbacks = original.map(row => () => [row.dateHeading, row.transaction.occurredAt]);
+  let current = L.transactionRows(items.slice(0, 1));
+  assert.equal(current.length, 1);
+  current = L.transactionRows([]);
+  assert.deepEqual(current, []);
+  items.length = 0;
+  assert.doesNotThrow(() => oldCallbacks.forEach(render => render()));
+  assert.equal(original.filter(row => row.dateHeading).length, 20);
+});
+test('搜索、删除首行或修改日期后，日期标题随行快照更新且旧行不被改写', () => {
+  const first = transaction();
+  const second = transaction({ id: uuid(11) });
+  const oldRows = L.transactionRows([first, second]);
+  assert.ok(oldRows[0].dateHeading);
+  assert.equal(oldRows[1].dateHeading, '');
+  const filtered = L.transactionRows([second]);
+  assert.ok(filtered[0].dateHeading);
+  assert.notEqual(filtered[0].renderKey, oldRows[1].renderKey);
+  second.occurredAt = '2026-09-01T12:00:00+08:00';
+  assert.equal(oldRows[1].transaction.occurredAt, first.occurredAt);
+  const edited = L.transactionRows([first, second]);
+  assert.ok(edited[1].dateHeading);
+  assert.notEqual(edited[1].renderKey, oldRows[1].renderKey);
+});

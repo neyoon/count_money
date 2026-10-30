@@ -372,3 +372,35 @@ export function dailyFlows(ledger: Ledger, month: string, now: Date = new Date()
   }
   return result;
 }
+
+export function calendarDay(month: string, requestedDay: number): number {
+  const parts = month.split('-').map(Number);
+  return Math.max(1, Math.min(requestedDay, new Date(parts[0], parts[1], 0).getDate()));
+}
+// Monday-first calendar, padded to complete weeks. Zero means an empty cell.
+export function calendarCells(month: string): number[] {
+  const parts = month.split('-').map(Number);
+  const leading = (new Date(parts[0], parts[1] - 1, 1).getDay() + 6) % 7;
+  const days = new Date(parts[0], parts[1], 0).getDate();
+  const count = Math.ceil((leading + days) / 7) * 7;
+  return Array.from({ length: count }, (_: unknown, index: number) => index >= leading && index < leading + days ? index - leading + 1 : 0);
+}
+
+export interface TransactionRowSnapshot {
+  transaction: Transaction;
+  dateHeading: string;
+  renderKey: string;
+}
+// Each render callback owns its date grouping; it never indexes a newer filtered list.
+export function transactionRows(transactions: Transaction[]): TransactionRowSnapshot[] {
+  let previousDate = '';
+  return transactions.map((original: Transaction) => {
+    const transaction = JSON.parse(JSON.stringify(original)) as Transaction;
+    const date = new Date(transaction.occurredAt);
+    const key = date.toDateString();
+    const heading = key === previousDate ? '' : date.toLocaleDateString();
+    previousDate = key;
+    return { transaction: transaction, dateHeading: heading,
+      renderKey: JSON.stringify(transaction) + '|' + heading };
+  });
+}

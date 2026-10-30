@@ -1,11 +1,11 @@
-import { Transaction } from '../core/Ledger';
+import { TransactionRowSnapshot } from '../core/Ledger';
 
 export class TransactionSource implements IDataSource {
-  private items: Transaction[] = [];
+  private items: TransactionRowSnapshot[] = [];
   private listeners: DataChangeListener[] = [];
   totalCount(): number { return this.items.length; }
-  getData(index: number): Transaction { return this.items[index]; }
-  replace(items: Transaction[]): void {
+  getData(index: number): TransactionRowSnapshot { return this.items[index]; }
+  replace(items: TransactionRowSnapshot[]): void {
     this.items = items;
     this.listeners.forEach((listener: DataChangeListener) => listener.onDataReloaded());
   }
