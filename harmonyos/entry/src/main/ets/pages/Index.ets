@@ -572,7 +572,7 @@ struct Index {
                         .backgroundColor(day === this.selectedDay ? AppColors.accentTint : Color.Transparent)
                       Circle().width(4).height(4).fill(AppColors.accent).opacity(this.daysWithEntries.includes(day) ? 1 : 0)
                     }.width(36).height(40).justifyContent(FlexAlign.Center)
-                  }.width(36).height(40).padding(0).borderRadius(8).backgroundColor(Color.Transparent)
+                  }.width('100%').height('100%').padding(0).borderRadius(8).backgroundColor(Color.Transparent)
                     .accessibilityText(`${this.monthLabel()}${day}日${day === this.selectedDay ? '，已选中' : ''}`)
                     .onClick(() => { this.selectCalendarDay(day); })
                 }
