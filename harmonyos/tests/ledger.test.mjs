@@ -308,3 +308,15 @@ test('搜索、删除首行或修改日期后，日期标题随行快照更新�
   assert.ok(edited[1].dateHeading);
   assert.notEqual(edited[1].renderKey, oldRows[1].renderKey);
 });
+
+test('常驻数字键盘支持小数、退格和清空，限制两位小数和金额长度', () => {
+  let value = '';
+  for (const key of ['.', '1', '2', '3', '.']) value = L.keypadAmount(value, key);
+  assert.equal(value, '0.12');
+  assert.equal(L.keypadAmount(value, 'backspace'), '0.1');
+  assert.equal(L.keypadAmount(value, 'clear'), '');
+  assert.equal(L.keypadAmount('', 'backspace'), '');
+  assert.equal(L.keypadAmount('0', '5'), '5');
+  assert.equal(L.keypadAmount('1234567890', '1'), '1234567890');
+  assert.equal(L.keypadAmount('12', '-'), '12');
+});

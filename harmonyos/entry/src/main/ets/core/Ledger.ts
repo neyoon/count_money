@@ -404,3 +404,15 @@ export function transactionRows(transactions: Transaction[]): TransactionRowSnap
       renderKey: JSON.stringify(transaction) + '|' + heading };
   });
 }
+
+export function keypadAmount(current: string, key: string): string {
+  if (key === 'clear') return '';
+  if (key === 'backspace') return current.slice(0, -1);
+  if (key === '.') return current.includes('.') ? current : (current || '0') + '.';
+  if (!/^[0-9]$/.test(key)) return current;
+  const parts = current.split('.');
+  if (parts.length === 2 && parts[1].length >= 2) return current;
+  const next = current === '0' ? key : current + key;
+  if (next.split('.')[0].length > 10) return current;
+  return next;
+}

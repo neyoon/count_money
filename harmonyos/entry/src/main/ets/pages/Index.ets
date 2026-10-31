@@ -5,7 +5,7 @@ import {
   Ledger, Asset, Category, Transaction, AmountCandidate, CategoryTotal, Repayment,
   ASSET_KINDS, ASSET_NAMES, emptyLedger, clone, cents, money, debt, newAsset,
   balances, overview, categoryTotals, localMonth, saveTransaction, deleteTransaction,
-  parseBackup, exportBackup, amountCandidates, assetValues, repaymentRows, addFundActivity, dailyFlows, DailyFlow, FundActivity, Overview, TransactionRowSnapshot, transactionRows, calendarDay, calendarCells
+  parseBackup, exportBackup, amountCandidates, assetValues, repaymentRows, addFundActivity, dailyFlows, DailyFlow, FundActivity, Overview, TransactionRowSnapshot, transactionRows, calendarDay, calendarCells, keypadAmount
 } from '../core/Ledger';
 import { LedgerRepository } from '../services/LedgerRepository';
 import { BackupFiles } from '../services/BackupFiles';
@@ -197,7 +197,7 @@ struct Index {
     return $r('app.media.account_wallet');
   }
   private accountOptions(payment: boolean = false): SelectOption[] {
-    return this.eligibleAccounts(payment).map((a: Asset): SelectOption => { return { value: a.name }; });
+    return this.eligibleAccounts(payment).map((a: Asset): SelectOption => { return { value: a.name, icon: this.accountIcon(a.id) }; });
   }
   private optionIndex(id: string, payment: boolean = false): number {
     return this.eligibleAccounts(payment).findIndex((a: Asset) => a.id === id);
@@ -226,11 +226,12 @@ struct Index {
     return Math.max(balance, schedule);
   }
 
-  private startEntry(): void {
+  private startEntry(keepSelection: boolean = false): void {
     this.page = 2; this.editorOpen = true; this.editingID = '';
-    this.profitLoss = false; this.kind = 'expense'; this.categoryKey = 'expense_food'; this.amount = ''; this.title = '';
-    this.paymentID = ''; this.installments = ''; this.occurredAt = new Date().toISOString();
-    this.accountID = this.ledger.assets.find((a: Asset) => a.kind !== 'fund')?.id || '';
+    if (!keepSelection) { this.kind = 'expense'; this.categoryKey = 'expense_food'; }
+    this.profitLoss = false; this.amount = ''; this.title = '';
+    this.installments = ''; this.occurredAt = new Date().toISOString();
+    this.normalizeAccounts();
     this.recognizedText = ''; this.candidates = [];
   }
 
@@ -308,7 +309,7 @@ struct Index {
       if (this.installments && !/^\d+$/.test(this.installments)) throw new Error('分期期数必须是整数');
       if (this.kind === 'fundProfit') {
         await this.commit(addFundActivity(this.ledger, this.accountID, { id: util.generateRandomUUID(), kind: 'valuation', amount: money((this.profitLoss ? -1 : 1) * Math.abs(cents(this.amount))), occurredAt: this.occurredAt, note: this.title }));
-        this.startEntry(); this.editorOpen = false; return;
+        this.startEntry(true); this.editorOpen = false; return;
       }
       const transaction: Transaction = {
         id: this.editingID || util.generateRandomUUID(), kind: this.kind, title: this.title.trim(),
@@ -319,7 +320,7 @@ struct Index {
       if (this.special()) transaction.paymentAccountID = this.paymentID;
       if (this.installments) transaction.installmentMonths = Number(this.installments);
       await this.commit(saveTransaction(this.ledger, transaction));
-      this.startEntry(); this.editorOpen = false;
+      this.startEntry(true); this.editorOpen = false;
 
     } catch (error) { this.notify((error as Error).message); }
     finally { this.busy = false; }
@@ -635,8 +636,7 @@ struct Index {
     }.width('100%')
   }
 
-  @Builder private entryEditor() {
-    Column({ space: 6 }) {
+  @Builder private entryHeader() {
       Row() {
         Text(this.editingID ? '编辑账目' : '记账').fontSize(21).fontWeight(FontWeight.Bold).fontColor(AppColors.primary).layoutWeight(1)
         Button('识别截图').height(28).fontSize(12).fontColor(AppColors.accent).backgroundColor(AppColors.accentTint)
@@ -644,21 +644,22 @@ struct Index {
         Button('取消').margin({ left: 6 }).height(30).fontSize(12).fontColor(AppColors.muted).backgroundColor(AppColors.secondarySurface)
           .onClick(() => { this.startEntry(); this.editorOpen = false; })
       }.width('100%')
+  }
+  @Builder private entryTypes() {
       Row({ space: 8 }) {
         ForEach(['expense', 'income', 'transfer', 'fundProfit'], (value: string) => {
           Button(value === 'expense' ? '支出' : value === 'income' ? '收入' : value === 'transfer' ? '转账' : '基金盈亏').height(32).layoutWeight(1).fontSize(14)
             .fontColor(this.kind === value ? AppColors.onPrimary : AppColors.muted).backgroundColor(this.kind === value ? AppColors.primary : AppColors.secondarySurface)
             .onClick(() => {
               this.kind = value; this.categoryKey = value === 'expense' ? 'expense_food' : value === 'income' ? 'income_salary' : value === 'transfer' ? 'expense_transfer' : 'fund_profit';
-              this.installments = ''; this.paymentID = ''; this.editorOpen = true;
-              if (value === 'fundProfit') this.accountID = this.ledger.assets.find((a: Asset) => a.kind === 'fund')?.id || '';
-              if (value === 'transfer') this.accountID = this.ledger.assets.find((a: Asset) => !debt(a.kind) && a.kind !== 'fund')?.id || '';
+              this.installments = ''; this.editorOpen = true;
               this.normalizeAccounts();
             })
         })
       }
-      TextInput({ text: this.amount, placeholder: '0.00' }).type(InputType.NUMBER_DECIMAL).fontSize(28).height(44)
-        .onChange((value: string) => { this.amount = value; this.editorOpen = true; })
+  }
+  @Builder private entryFields() {
+    Column({ space: this.expandedDetails ? 12 : 6 }) {
       Row({ space: 8 }) {
         Button({ type: ButtonType.Normal }) {
           Row({ space: 6 }) {
@@ -666,10 +667,10 @@ struct Index {
             Text(this.entryDateLabel()).fontSize(13).fontColor(AppColors.accent).layoutWeight(1)
             Image($r('app.media.chevron_down')).width(12).height(12)
           }.width('100%')
-        }.layoutWeight(1).height(32).padding({ left: 10, right: 10 }).borderRadius(8)
+        }.layoutWeight(1).height(this.expandedDetails ? 40 : 32).padding({ left: 10, right: 10 }).borderRadius(8)
           .backgroundColor(AppColors.secondarySurface).accessibilityText(`选择记账日期，${this.entryDateLabel()}`)
           .onClick(() => { this.selectDate(); })
-        Button(this.entryTimeLabel()).height(32).fontSize(13).fontColor(AppColors.accent)
+        Button(this.entryTimeLabel()).height(this.expandedDetails ? 40 : 32).fontSize(13).fontColor(AppColors.accent)
           .backgroundColor(AppColors.secondarySurface).accessibilityText('选择记账时间')
           .onClick(() => { this.selectTime(); })
       }.width('100%')
@@ -692,18 +693,18 @@ struct Index {
         Grid() {
         ForEach(this.categories(), (category: Category) => {
           GridItem() {
-            Column({ space: 2 }) {
-              Image(CategoryStyle.icon(category.presetKey)).width(18).height(18).objectFit(ImageFit.Contain)
+            Column({ space: this.expandedDetails ? 6 : 2 }) {
+              Image(CategoryStyle.icon(category.presetKey)).width(this.expandedDetails ? 22 : 18).height(this.expandedDetails ? 22 : 18).objectFit(ImageFit.Contain)
               Text(category.name).fontSize(11).fontColor(AppColors.ink).maxLines(1)
-            }.width('100%').height(40).justifyContent(FlexAlign.Center).borderRadius(8)
+            }.width('100%').height(this.expandedDetails ? 56 : 40).justifyContent(FlexAlign.Center).borderRadius(8)
               .backgroundColor(this.categoryKey === category.presetKey ? AppColors.primaryTint : AppColors.surface)
               .border({ width: this.categoryKey === category.presetKey ? 1.5 : 1,
                 color: this.categoryKey === category.presetKey ? AppColors.ink : AppColors.line })
           }
-            .onClick(() => { this.categoryKey = category.presetKey; this.installments = ''; this.paymentID = ''; this.normalizeAccounts(); this.editorOpen = true; })
+            .onClick(() => { this.categoryKey = category.presetKey; this.installments = ''; this.normalizeAccounts(); this.editorOpen = true; })
         }, (category: Category) => category.id)
       }.columnsTemplate('1fr 1fr 1fr 1fr').rowsGap(4).columnsGap(4)
-        .height(Math.min(128, Math.ceil(this.categories().length / 4) * 40 + Math.max(0, Math.ceil(this.categories().length / 4) - 1) * 4))
+        .height(Math.min(this.expandedDetails ? 176 : 128, Math.ceil(this.categories().length / 4) * (this.expandedDetails ? 56 : 40) + Math.max(0, Math.ceil(this.categories().length / 4) - 1) * 4))
         .width('100%').scrollBar(BarState.Off)
       }
       if (this.ledger.assets.length === 0) {
@@ -712,51 +713,102 @@ struct Index {
       } else if (this.kind === 'transfer') {
         Row({ space: 8 }) {
           Text('转出账户').fontSize(12).fontColor(AppColors.muted).width(64)
-          Image(this.accountIcon(this.paymentID)).width(22).height(22).objectFit(ImageFit.Contain)
+
           Select(this.accountOptions(true)).selected(this.optionIndex(this.paymentID, true)).value(this.accountName(this.paymentID))
-            .layoutWeight(1).height(32).font({ size: 13 })
+            .layoutWeight(1).height(this.expandedDetails ? 40 : 32).font({ size: 13 })
             .onSelect((index: number) => { this.paymentID = this.eligibleAccounts(true)[index].id; this.editorOpen = true; })
         }.width('100%')
         Row({ space: 8 }) {
           Text('转入账户').fontSize(12).fontColor(AppColors.muted).width(64)
-          Image(this.accountIcon(this.accountID)).width(22).height(22).objectFit(ImageFit.Contain)
+
           Select(this.accountOptions()).selected(this.optionIndex(this.accountID)).value(this.accountName(this.accountID))
-            .layoutWeight(1).height(32).font({ size: 13 })
+            .layoutWeight(1).height(this.expandedDetails ? 40 : 32).font({ size: 13 })
             .onSelect((index: number) => { this.accountID = this.eligibleAccounts()[index].id; this.editorOpen = true; })
         }.width('100%')
       } else {
         Row({ space: 8 }) {
           Text(this.categoryKey === 'expense_repayment' ? '负债账户' : this.categoryKey === 'expense_fund_purchase' || this.kind === 'fundProfit' ? '基金账户' : '记账账户')
             .fontSize(12).fontColor(AppColors.muted).width(64)
-          Image(this.accountIcon(this.accountID)).width(22).height(22).objectFit(ImageFit.Contain)
+
           Select(this.accountOptions()).selected(this.optionIndex(this.accountID)).value(this.accountName(this.accountID))
-            .layoutWeight(1).height(32).font({ size: 13 })
+            .layoutWeight(1).height(this.expandedDetails ? 40 : 32).font({ size: 13 })
             .onSelect((index: number) => { this.accountID = this.eligibleAccounts()[index].id; this.editorOpen = true; })
         }.width('100%')
         if (this.special()) {
           Row({ space: 8 }) {
             Text(this.categoryKey === 'income_fund_redemption' ? '基金账户' : '付款账户').fontSize(12).fontColor(AppColors.muted).width(64)
-            Image(this.accountIcon(this.paymentID)).width(22).height(22).objectFit(ImageFit.Contain)
+
           Select(this.accountOptions(true)).selected(this.optionIndex(this.paymentID, true)).value(this.accountName(this.paymentID))
-              .layoutWeight(1).height(32).font({ size: 13 })
+              .layoutWeight(1).height(this.expandedDetails ? 40 : 32).font({ size: 13 })
               .onSelect((index: number) => { this.paymentID = this.eligibleAccounts(true)[index].id; this.editorOpen = true; })
           }.width('100%')
         }
       }
-      TextInput({ text: this.title, placeholder: '备注' }).height(32).fontSize(14)
+      TextInput({ text: this.title, placeholder: '备注' }).height(this.expandedDetails ? 40 : 32).fontSize(14)
         .onChange((value: string) => { this.title = value; this.editorOpen = true; })
       if (debt(this.ledger.assets.find((a: Asset) => a.id === this.accountID)?.kind || '') && this.kind === 'expense' && !this.special()) {
-        TextInput({ text: this.installments, placeholder: '分期期数（可选）' }).height(32).fontSize(14).type(InputType.Number)
+        TextInput({ text: this.installments, placeholder: '分期期数（可选）' }).height(this.expandedDetails ? 40 : 32).fontSize(14).type(InputType.Number)
           .onChange((value: string) => { this.installments = value; })
         Text('分期时填写每期金额').fontSize(11).fontColor(AppColors.muted)
       }
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+  @Builder private entryActions() {
       Button(this.editingID ? '保存修改' : '确认记账').width('100%').height(38).backgroundColor(AppColors.primary).fontColor(AppColors.onPrimary)
         .enabled(!this.busy && this.ready && this.ledger.assets.length > 0).onClick(() => { this.save(); })
       if (this.editingID) {
         Button('删除这笔账').fontColor(AppColors.danger).backgroundColor(AppColors.dangerTint)
           .onClick(() => { const t = this.ledger.transactions.find((item: Transaction) => item.id === this.editingID); if (t) this.remove(t); })
       }
+  }
+  @Builder private entryEditor() {
+    Column({ space: 6 }) {
+      this.entryHeader()
+      this.entryTypes()
+      TextInput({ text: this.amount, placeholder: '0.00' }).type(InputType.NUMBER_DECIMAL).fontSize(28).height(44)
+        .onChange((value: string) => { this.amount = value; this.editorOpen = true; })
+      this.entryFields()
+      this.entryActions()
     }.padding(10).borderRadius(8).backgroundColor(AppColors.surface).width('100%').alignItems(HorizontalAlign.Start)
+  }
+  private pressAmountKey(key: string): void {
+    this.amount = keypadAmount(this.amount, key);
+    this.editorOpen = true;
+  }
+  @Builder private expandedEntry() {
+    Row({ space: 16 }) {
+      Scroll() {
+        Column({ space: 16 }) {
+          this.entryHeader()
+          this.entryFields()
+        }.padding(16).width('100%').borderRadius(8).backgroundColor(AppColors.surface)
+      }.width(0).layoutWeight(1).height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
+      Column({ space: 10 }) {
+        this.entryTypes()
+        Row({ space: 8 }) {
+          Text('¥').fontSize(24).fontColor(AppColors.muted)
+          Text(this.amount || '0.00').fontSize(36).fontWeight(FontWeight.Medium).fontColor(AppColors.ink)
+            .layoutWeight(1).maxLines(1).minFontSize(20).maxFontSize(36).textAlign(TextAlign.End)
+        }.width('100%').height(54).padding({ left: 12, right: 12 }).backgroundColor(AppColors.surface).borderRadius(8)
+        Row() {
+          Text('金额').fontSize(12).fontColor(AppColors.muted).layoutWeight(1)
+          Button('清空').height(28).fontSize(12).fontColor(AppColors.muted).backgroundColor(Color.Transparent)
+            .onClick(() => { this.pressAmountKey('clear'); })
+        }.width('100%')
+        Grid() {
+          ForEach(['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'], (key: string) => {
+            GridItem() {
+              Button(key, { type: ButtonType.Normal }).width('100%').height('100%').fontSize(25)
+                .fontColor(AppColors.ink).backgroundColor(AppColors.surface).borderRadius(12)
+                .accessibilityText(key === '⌫' ? '退格' : key === '.' ? '小数点' : key)
+                .onClick(() => { this.pressAmountKey(key === '⌫' ? 'backspace' : key); })
+            }
+          }, (key: string) => key)
+        }.columnsTemplate('1fr 1fr 1fr').rowsTemplate('1fr 1fr 1fr 1fr').rowsGap(8).columnsGap(8)
+          .width('100%').layoutWeight(1).scrollBar(BarState.Off)
+        this.entryActions()
+      }.width(0).layoutWeight(1).height('100%')
+    }.width('100%').layoutWeight(1).padding({ top: 6, bottom: 6 }).alignItems(VerticalAlign.Top).enabled(!this.busy)
   }
 
   @Builder private dashboardCharts() {
@@ -1083,6 +1135,8 @@ struct Index {
         } else {
           LoadingProgress().width(32).height(32).color(AppColors.accent).margin(24)
         }
+      } else if (this.page === 2 && this.expandedDetails) {
+        this.expandedEntry()
       } else if (this.page === 0 && this.expandedDetails) {
         this.expandedOverview()
       } else if (this.page === 1) {
